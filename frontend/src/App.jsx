@@ -51,7 +51,7 @@ function Badge({ label, color }) {
 
 // ── Nav ────────────────────────────────────────────────────────────────────
 function Navbar({ page, setPage, onLogout }) {
-  const tabs = ["Dashboard", "Staff", "Students", "Import"];
+  const tabs = ["Dashboard", "Send Alert", "Templates", "Staff", "Students", "Import"];
   return (
     <nav style={{
       background: theme.blue, color: theme.white,
@@ -131,13 +131,21 @@ function Dashboard() {
 
   return (
     <div style={{ padding: 24 }}>
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, color: theme.blue, margin: 0 }}>
-          Live Alert Feed
-        </h1>
-        <p style={{ color: theme.gray, margin: "4px 0 0", fontSize: 14 }}>
-          Auto-refreshes every 15 seconds
-        </p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: theme.blue, margin: 0 }}>
+            Live Alert Feed
+          </h1>
+          <p style={{ color: theme.gray, margin: "4px 0 0", fontSize: 14 }}>
+            Auto-refreshes every 15 seconds
+          </p>
+        </div>
+        <a href={`${API}/logs/export/alerts`} style={{
+          background: theme.grayLight, color: theme.gray,
+          borderRadius: 8, padding: "8px 16px",
+          fontWeight: 600, fontSize: 13,
+          textDecoration: "none", display: "inline-block"
+        }}>⬇ Export CSV</a>
       </div>
 
       {/* Stat Cards */}
@@ -578,6 +586,12 @@ function StudentsPage() {
           </p>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
+          <a href={`${API}/logs/export/students`} style={{
+            background: theme.grayLight, color: theme.gray,
+            borderRadius: 8, padding: "8px 16px",
+            fontWeight: 600, fontSize: 13,
+            textDecoration: "none", display: "inline-block"
+          }}>⬇ Export CSV</a>
           <button onClick={() => setShowAll(!showAll)} style={{
             background: showAll ? theme.blue : theme.grayLight,
             color: showAll ? theme.white : theme.gray,
@@ -681,6 +695,280 @@ function StudentsPage() {
     </div>
   );
 }
+
+// ── Send Alert Page ────────────────────────────────────────────────────────
+function SendAlert() {
+  const [message, setMessage] = useState("");
+  const [sectionCode, setSectionCode] = useState("00000");
+  const [priority, setPriority] = useState("NORMAL");
+  const [sections, setSections] = useState([]);
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+  const [templates, setTemplates] = useState([]);
+
+  useEffect(() => {
+    fetch(`${API}/alerts/sections-list`).then(r => r.json()).then(setSections).catch(() => {});
+    fetch(`${API}/alerts/templates`).then(r => r.json()).then(setTemplates).catch(() => {});
+  }, []);
+
+  const handleSend = async () => {
+    if (!message.trim()) { setError("Message cannot be empty"); return; }
+    if (message.length > 160) { setError("Message exceeds 160 characters"); return; }
+    setSending(true);
+    setError("");
+    setResult(null);
+    try {
+      const res = await fetch(`${API}/alerts/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, section_code: sectionCode, priority_level: priority })
+      });
+      const data = await res.json();
+      if (!res.ok) setError(data.detail || "Failed to send alert");
+      else setResult(data);
+    } catch { setError("Could not reach backend"); }
+    finally { setSending(false); }
+  };
+
+  const applyTemplate = (t) => {
+    setMessage(t.message);
+    if (t.section_code) setSectionCode(t.section_code);
+    setPriority(t.priority_level);
+  };
+
+  const charColor = message.length > 140 ? theme.danger : message.length > 120 ? "#D97706" : theme.gray;
+
+  return (
+    <div style={{ padding: 24, maxWidth: 700, margin: "0 auto" }}>
+      <h1 style={{ fontSize: 22, fontWeight: 800, color: theme.blue, margin: "0 0 6px" }}>
+        Send Alert
+      </h1>
+      <p style={{ color: theme.gray, fontSize: 14, margin: "0 0 24px" }}>
+        Broadcast an alert directly from the dashboard without needing a phone.
+      </p>
+
+      {/* Quick Templates */}
+      {templates.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: theme.gray, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+            Quick Templates
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {templates.map(t => (
+              <button key={t.id} onClick={() => applyTemplate(t)} style={{
+                background: t.priority_level === "EMERGENCY" ? "#FEE2E2" : "#EFF6FF",
+                color: t.priority_level === "EMERGENCY" ? theme.danger : theme.blue,
+                border: `1px solid ${t.priority_level === "EMERGENCY" ? "#FCA5A5" : "#BFDBFE"}`,
+                borderRadius: 20, padding: "6px 14px",
+                cursor: "pointer", fontSize: 13, fontWeight: 600
+              }}>
+                {t.priority_level === "EMERGENCY" ? "🚨 " : "📢 "}{t.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Form */}
+      <div style={{ background: theme.white, borderRadius: 16, border: `1px solid ${theme.grayLight}`, padding: 24 }}>
+
+        {/* Section */}
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 12, fontWeight: 700, color: theme.gray, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Send To
+          </label>
+          <select value={sectionCode} onChange={e => setSectionCode(e.target.value)} style={{
+            width: "100%", padding: "10px 12px", border: `1px solid ${theme.grayLight}`,
+            borderRadius: 8, fontSize: 14, outline: "none", background: "white", boxSizing: "border-box"
+          }}>
+            {sections.map(s => (
+              <option key={s.code} value={s.code}>{s.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Priority */}
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 12, fontWeight: 700, color: theme.gray, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Priority
+          </label>
+          <div style={{ display: "flex", gap: 8 }}>
+            {["NORMAL", "URGENT", "EMERGENCY"].map(p => (
+              <button key={p} onClick={() => setPriority(p)} style={{
+                flex: 1, padding: "8px",
+                background: priority === p ? (p === "EMERGENCY" ? theme.danger : p === "URGENT" ? "#D97706" : theme.blue) : theme.grayLight,
+                color: priority === p ? "white" : theme.gray,
+                border: "none", borderRadius: 8, cursor: "pointer",
+                fontWeight: 700, fontSize: 13, transition: "all 0.15s"
+              }}>{p}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Message */}
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ fontSize: 12, fontWeight: 700, color: theme.gray, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Message
+          </label>
+          <textarea
+            value={message}
+            onChange={e => setMessage(e.target.value)}
+            placeholder="Type your alert message here..."
+            rows={4}
+            style={{
+              width: "100%", padding: "10px 12px",
+              border: `1px solid ${message.length > 160 ? theme.danger : theme.grayLight}`,
+              borderRadius: 8, fontSize: 14, outline: "none",
+              resize: "vertical", boxSizing: "border-box", fontFamily: "inherit"
+            }}
+          />
+          <div style={{ textAlign: "right", fontSize: 12, color: charColor, marginTop: 4 }}>
+            {message.length}/160 characters
+          </div>
+        </div>
+
+        {error && (
+          <div style={{ background: "#FEE2E2", color: theme.danger, borderRadius: 8, padding: "10px 14px", fontSize: 13, marginBottom: 16 }}>
+            ⚠ {error}
+          </div>
+        )}
+
+        {result && (
+          <div style={{ background: theme.green_bg || "#DCFCE7", color: theme.success, borderRadius: 8, padding: "10px 14px", fontSize: 13, marginBottom: 16, fontWeight: 600 }}>
+            ✅ {result.message}
+          </div>
+        )}
+
+        <button onClick={handleSend} disabled={sending || message.length > 160} style={{
+          width: "100%",
+          background: priority === "EMERGENCY" ? theme.danger : theme.blue,
+          color: "white", border: "none", borderRadius: 10,
+          padding: "14px", fontSize: 16, fontWeight: 700,
+          cursor: sending ? "not-allowed" : "pointer",
+          opacity: sending ? 0.7 : 1
+        }}>
+          {sending ? "Sending..." : priority === "EMERGENCY" ? "🚨 Send Emergency Broadcast" : "📢 Send Alert"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+// ── Templates Page ─────────────────────────────────────────────────────────
+function TemplatesPage() {
+  const [templates, setTemplates] = useState([]);
+  const [form, setForm] = useState({ name: "", message: "", section_code: "", priority_level: "NORMAL" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const fetchTemplates = async () => {
+    const res = await fetch(`${API}/alerts/templates`);
+    setTemplates(await res.json());
+  };
+
+  useEffect(() => { fetchTemplates(); }, []);
+
+  const handleSave = async () => {
+    if (!form.name.trim() || !form.message.trim()) { setError("Name and message are required"); return; }
+    if (form.message.length > 160) { setError("Message exceeds 160 characters"); return; }
+    setSaving(true);
+    setError("");
+    try {
+      await fetch(`${API}/alerts/templates`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form)
+      });
+      setForm({ name: "", message: "", section_code: "", priority_level: "NORMAL" });
+      fetchTemplates();
+    } finally { setSaving(false); }
+  };
+
+  const handleDelete = async (id) => {
+    if (!confirm("Delete this template?")) return;
+    await fetch(`${API}/alerts/templates/${id}`, { method: "DELETE" });
+    fetchTemplates();
+  };
+
+  const inputStyle = {
+    border: `1px solid ${theme.grayLight}`, borderRadius: 8,
+    padding: "8px 12px", fontSize: 14, width: "100%", boxSizing: "border-box", outline: "none"
+  };
+
+  return (
+    <div style={{ padding: 24 }}>
+      <h1 style={{ fontSize: 22, fontWeight: 800, color: theme.blue, margin: "0 0 6px" }}>
+        Alert Templates
+      </h1>
+      <p style={{ color: theme.gray, fontSize: 14, margin: "0 0 24px" }}>
+        Save common messages as templates for one-click sending.
+      </p>
+
+      {/* Add Template */}
+      <div style={{ background: theme.white, borderRadius: 16, border: `1px solid ${theme.grayLight}`, padding: 20, marginBottom: 24 }}>
+        <h2 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 16px", color: theme.blue }}>New Template</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: theme.gray, display: "block", marginBottom: 4 }}>Template Name</label>
+            <input style={inputStyle} placeholder="e.g. Class Cancelled" value={form.name}
+              onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: theme.gray, display: "block", marginBottom: 4 }}>Priority</label>
+            <select style={inputStyle} value={form.priority_level}
+              onChange={e => setForm(f => ({ ...f, priority_level: e.target.value }))}>
+              <option>NORMAL</option>
+              <option>URGENT</option>
+              <option>EMERGENCY</option>
+            </select>
+          </div>
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: theme.gray, display: "block", marginBottom: 4 }}>Message (max 160 chars)</label>
+          <textarea style={{ ...inputStyle, resize: "vertical" }} rows={3}
+            placeholder="Type your template message..."
+            value={form.message}
+            onChange={e => setForm(f => ({ ...f, message: e.target.value }))} />
+          <div style={{ textAlign: "right", fontSize: 11, color: form.message.length > 160 ? theme.danger : theme.gray }}>
+            {form.message.length}/160
+          </div>
+        </div>
+        {error && <div style={{ color: theme.danger, fontSize: 13, marginBottom: 10 }}>⚠ {error}</div>}
+        <button onClick={handleSave} disabled={saving} style={{
+          background: theme.blue, color: "white", border: "none",
+          borderRadius: 8, padding: "9px 20px", cursor: "pointer", fontWeight: 700, fontSize: 14
+        }}>
+          {saving ? "Saving..." : "+ Save Template"}
+        </button>
+      </div>
+
+      {/* Templates List */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16 }}>
+        {templates.map(t => (
+          <div key={t.id} style={{
+            background: theme.white, borderRadius: 12,
+            border: `1px solid ${t.priority_level === "EMERGENCY" ? "#FCA5A5" : theme.grayLight}`,
+            padding: 20
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <span style={{ fontWeight: 700, fontSize: 15, color: theme.blue }}>{t.name}</span>
+              <Badge label={t.priority_level} />
+            </div>
+            <p style={{ fontSize: 13, color: "#374151", margin: "0 0 16px", lineHeight: 1.5 }}>{t.message}</p>
+            <button onClick={() => handleDelete(t.id)} style={{
+              background: "#FEE2E2", color: theme.danger,
+              border: "none", borderRadius: 6, padding: "4px 12px",
+              cursor: "pointer", fontWeight: 600, fontSize: 12
+            }}>Delete</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 
 // ── Login Screen ───────────────────────────────────────────────────────────
 const ADMIN_USERNAME = "pscc_admin";
@@ -826,6 +1114,8 @@ export default function App() {
 
   const pages = {
     Dashboard: <Dashboard />,
+    "Send Alert": <SendAlert />,
+    Templates: <TemplatesPage />,
     Staff: <StaffManager />,
     Students: <StudentsPage />,
     Import: <CSVImport />,
