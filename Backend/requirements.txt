@@ -6,3 +6,4 @@ python-dotenv==1.0.1
 twilio==9.1.0
 python-multipart==0.0.9
 aiohttp==3.9.5
+psycopg2-binary
