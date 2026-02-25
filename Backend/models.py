@@ -11,7 +11,7 @@ class Staff(Base):
     name = Column(String(100), nullable=False)
     phone_number = Column(String(20), unique=True, nullable=False)
     system_id = Column(String(20), unique=True, nullable=False)
-    pin = Column(String(5), nullable=False)  # 5-digit PIN stored as string
+    pin = Column(String(100), nullable=False)  # bcrypt hash
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -49,8 +49,20 @@ class AlertLog(Base):
     timestamp = Column(DateTime, default=datetime.utcnow)
     message_content = Column(Text, nullable=False)
     recipient_count = Column(Integer, default=0)
-    priority_level = Column(String(20), default="NORMAL")  # NORMAL, URGENT, EMERGENCY
+    priority_level = Column(String(20), default="NORMAL")
     section_code = Column(String(20), nullable=True)
-    status = Column(String(20), default="SENT")  # SENT, FAILED, PARTIAL
+    status = Column(String(20), default="SENT")
 
     sender = relationship("Staff", back_populates="alert_logs")
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    action = Column(String(100), nullable=False)
+    entity_type = Column(String(50), nullable=True)
+    entity_id = Column(Integer, nullable=True)
+    details = Column(Text, nullable=True)
+    ip_address = Column(String(50), nullable=True)
