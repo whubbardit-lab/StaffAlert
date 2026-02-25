@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 
-const API = "const API = "https://staffalert.onrender.com/api";
+const API = "https://staffalert.onrender.com/api";
 
 // ── Pellissippi Theme ──────────────────────────────────────────────────────
 const theme = {
