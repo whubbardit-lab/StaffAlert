@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 
-const API = "https://staffalert.onrender.com/api";
+const API = "http://localhost:8000/api";
 
 // ── Pellissippi Theme ──────────────────────────────────────────────────────
 const theme = {
@@ -50,7 +50,7 @@ function Badge({ label, color }) {
 }
 
 // ── Nav ────────────────────────────────────────────────────────────────────
-function Navbar({ page, setPage }) {
+function Navbar({ page, setPage, onLogout }) {
   const tabs = ["Dashboard", "Staff", "Students", "Import"];
   return (
     <nav style={{
@@ -59,15 +59,10 @@ function Navbar({ page, setPage }) {
       padding: "0 24px", height: 60,
       boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginRight: 40 }}>
-        <div style={{
-          background: theme.gold, borderRadius: 6,
-          width: 32, height: 32, display: "flex",
-          alignItems: "center", justifyContent: "center",
-          fontWeight: 900, color: theme.blue, fontSize: 16
-        }}>S</div>
-        <span style={{ fontWeight: 800, fontSize: 18, letterSpacing: "-0.02em" }}>
-          Staff<span style={{ color: theme.gold }}>Alert</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginRight: 40 }}>
+        <img src="/paws-logo.png" alt="PAWS" style={{ height: 44, width: "auto" }} />
+        <span style={{ fontWeight: 900, fontSize: 22, letterSpacing: "-0.02em", color: "white" }}>
+          PAWS<span style={{ color: theme.gold }}> Alert</span>
         </span>
       </div>
 
@@ -84,8 +79,17 @@ function Navbar({ page, setPage }) {
         ))}
       </div>
 
-      <div style={{ marginLeft: "auto", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
-        Pellissippi State College
+      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 16 }}>
+        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+          Pellissippi State Community College
+        </span>
+        <button onClick={onLogout} style={{
+          background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)",
+          color: "rgba(255,255,255,0.8)", borderRadius: 6, padding: "5px 14px",
+          cursor: "pointer", fontSize: 13, fontWeight: 600
+        }}>
+          Sign Out
+        </button>
       </div>
     </nav>
   );
@@ -678,9 +682,147 @@ function StudentsPage() {
   );
 }
 
+// ── Login Screen ───────────────────────────────────────────────────────────
+const ADMIN_USERNAME = "pscc_admin";
+const ADMIN_PASSWORD = "PawsAlert2025!";
+
+function LoginScreen({ onLogin }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleLogin = () => {
+    setError("");
+    setLoading(true);
+    setTimeout(() => {
+      if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+        onLogin();
+      } else {
+        setError("Invalid username or password");
+      }
+      setLoading(false);
+    }, 600);
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter") handleLogin();
+  };
+
+  return (
+    <div style={{
+      minHeight: "100vh",
+      background: theme.blueDark,
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      fontFamily: "'Segoe UI', system-ui, sans-serif"
+    }}>
+      {/* Background pattern */}
+      <div style={{
+        position: "fixed", inset: 0, opacity: 0.04,
+        backgroundImage: "radial-gradient(circle, #F2A900 1px, transparent 1px)",
+        backgroundSize: "32px 32px"
+      }} />
+
+      {/* Login Card */}
+      <div style={{
+        background: "white", borderRadius: 20,
+        padding: "48px 44px", width: "100%", maxWidth: 420,
+        boxShadow: "0 24px 64px rgba(0,0,0,0.4)",
+        position: "relative", zIndex: 1
+      }}>
+        {/* Logo */}
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <img src="/paws-logo.png" alt="PAWS" style={{ height: 72, width: "auto", marginBottom: 16 }} />
+          <h1 style={{
+            fontSize: 28, fontWeight: 900, color: theme.blue,
+            margin: 0, letterSpacing: "-0.02em"
+          }}>
+            PAWS<span style={{ color: theme.gold }}>Alert</span>
+          </h1>
+          <p style={{ color: theme.gray, fontSize: 14, margin: "6px 0 0" }}>
+            Admin Dashboard — Pellissippi State
+          </p>
+        </div>
+
+        {/* Fields */}
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 12, fontWeight: 700, color: theme.gray, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Username
+          </label>
+          <input
+            type="text"
+            value={username}
+            onChange={e => setUsername(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Enter username"
+            style={{
+              width: "100%", padding: "12px 16px",
+              border: `2px solid ${error ? theme.danger : theme.grayLight}`,
+              borderRadius: 10, fontSize: 15, outline: "none",
+              boxSizing: "border-box", transition: "border 0.15s"
+            }}
+          />
+        </div>
+
+        <div style={{ marginBottom: 24 }}>
+          <label style={{ fontSize: 12, fontWeight: 700, color: theme.gray, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Password
+          </label>
+          <input
+            type="password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Enter password"
+            style={{
+              width: "100%", padding: "12px 16px",
+              border: `2px solid ${error ? theme.danger : theme.grayLight}`,
+              borderRadius: 10, fontSize: 15, outline: "none",
+              boxSizing: "border-box", transition: "border 0.15s"
+            }}
+          />
+        </div>
+
+        {error && (
+          <div style={{
+            background: "#FEE2E2", color: theme.danger,
+            borderRadius: 8, padding: "10px 14px",
+            fontSize: 13, fontWeight: 600, marginBottom: 16,
+            textAlign: "center"
+          }}>
+            ⚠ {error}
+          </div>
+        )}
+
+        <button onClick={handleLogin} disabled={loading} style={{
+          width: "100%", background: theme.blue,
+          color: "white", border: "none", borderRadius: 10,
+          padding: "14px", fontSize: 16, fontWeight: 700,
+          cursor: loading ? "not-allowed" : "pointer",
+          opacity: loading ? 0.7 : 1, transition: "all 0.15s"
+        }}>
+          {loading ? "Signing in..." : "Sign In"}
+        </button>
+
+        <p style={{ textAlign: "center", fontSize: 12, color: theme.gray, marginTop: 20 }}>
+          🔒 Authorized personnel only
+        </p>
+      </div>
+
+      <p style={{ color: "rgba(255,255,255,0.3)", fontSize: 12, marginTop: 24 }}>
+        Pellissippi State Community College © 2025
+      </p>
+    </div>
+  );
+}
+
 // ── Root App ────────────────────────────────────────────────────────────────
 export default function App() {
   const [page, setPage] = useState("Dashboard");
+  const [loggedIn, setLoggedIn] = useState(false);
 
   const pages = {
     Dashboard: <Dashboard />,
@@ -689,9 +831,13 @@ export default function App() {
     Import: <CSVImport />,
   };
 
+  if (!loggedIn) {
+    return <LoginScreen onLogin={() => setLoggedIn(true)} />;
+  }
+
   return (
     <div style={{ minHeight: "100vh", background: theme.surface, fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
-      <Navbar page={page} setPage={setPage} />
+      <Navbar page={page} setPage={setPage} onLogout={() => setLoggedIn(false)} />
       <main style={{ maxWidth: 1200, margin: "0 auto" }}>
         {pages[page]}
       </main>
