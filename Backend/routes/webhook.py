@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Request, Depends, Form
+from fastapi import APIRouter, Request, Depends, Form, HTTPException
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 from database import get_db
 from models import Staff, Section, Subscription, AlertLog
 from sms import broadcast_sms, handle_opt_out
-import asyncio
+from security import verify_pin, validate_twilio_signature
+import os
 
 router = APIRouter()
 
@@ -23,6 +24,16 @@ async def sms_webhook(
     Body: str = Form(...),
     db: Session = Depends(get_db)
 ):
+    # ── Twilio Signature Validation ────────────────────────────────────────
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN", "")
+    signature = request.headers.get("X-Twilio-Signature", "")
+    url = str(request.url)
+    form_data = await request.form()
+    params = dict(form_data)
+
+    if auth_token and not validate_twilio_signature(auth_token, signature, url, params):
+        raise HTTPException(status_code=403, detail="Invalid Twilio signature")
+
     from_number = From.strip()
     body = Body.strip()
 
@@ -186,7 +197,7 @@ async def sms_webhook(
             "Students: text JOIN <SECTIONCODE> to subscribe."
         )
 
-    if staff.pin != pin:
+    if not verify_pin(pin, staff.pin):
         return "PAWS Alert: Incorrect PIN. Alert not sent."
 
     # Resolve recipients
