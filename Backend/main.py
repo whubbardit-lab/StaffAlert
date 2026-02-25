@@ -11,6 +11,7 @@ from routes.webhook import router as webhook_router
 from routes.staff import router as staff_router
 from routes.sections import router as sections_router
 from routes.logs import router as logs_router
+from routes.alerts import router as alerts_router
 
 app = FastAPI(
     title="StaffAlert API",
@@ -21,11 +22,7 @@ app = FastAPI(
 # CORS — allow the React frontend (adjust origin in production)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173",
-        "http://localhost:5174",
-        "http://localhost:3000",
-        "https://staffalert-frontend.onrender.com",
-    ],
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -36,6 +33,7 @@ app.include_router(webhook_router)
 app.include_router(staff_router, prefix="/api")
 app.include_router(sections_router, prefix="/api")
 app.include_router(logs_router, prefix="/api")
+app.include_router(alerts_router, prefix="/api")
 
 
 @app.get("/")
