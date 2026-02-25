@@ -3,7 +3,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 from database import get_db
 from models import Staff, Section, Subscription, AlertLog
-from sms import broadcast_sms, handle_opt_out, send_sms
+from sms import broadcast_sms, handle_opt_out
 import asyncio
 
 router = APIRouter()
