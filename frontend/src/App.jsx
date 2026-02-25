@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 
-const API = "https://staffalert.onrender.com/api";
+const API = "http://localhost:8000/api";
 
 // ── Pellissippi Theme ──────────────────────────────────────────────────────
 const theme = {
@@ -1006,26 +1006,33 @@ function TemplatesPage() {
 
 
 // ── Login Screen ───────────────────────────────────────────────────────────
-const ADMIN_USERNAME = "pscc_admin";
-const ADMIN_PASSWORD = "PawsAlert2025!";
-
 function LoginScreen({ onLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     setError("");
     setLoading(true);
-    setTimeout(() => {
-      if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-        onLogin();
-      } else {
+    try {
+      const res = await fetch(`${API}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+      if (!res.ok) {
         setError("Invalid username or password");
+      } else {
+        localStorage.setItem("paws_token", data.access_token);
+        onLogin();
       }
+    } catch {
+      setError("Could not reach server. Please try again.");
+    } finally {
       setLoading(false);
-    }, 600);
+    }
   };
 
   const handleKeyDown = (e) => {
@@ -1145,7 +1152,12 @@ function LoginScreen({ onLogin }) {
 // ── Root App ────────────────────────────────────────────────────────────────
 export default function App() {
   const [page, setPage] = useState("Dashboard");
-  const [loggedIn, setLoggedIn] = useState(false);
+  const [loggedIn, setLoggedIn] = useState(!!localStorage.getItem("paws_token"));
+
+  const handleLogout = () => {
+    localStorage.removeItem("paws_token");
+    setLoggedIn(false);
+  };
 
   const pages = {
     Dashboard: <Dashboard />,
@@ -1162,7 +1174,7 @@ export default function App() {
 
   return (
     <div style={{ minHeight: "100vh", background: theme.surface, fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
-      <Navbar page={page} setPage={setPage} onLogout={() => setLoggedIn(false)} />
+      <Navbar page={page} setPage={setPage} onLogout={handleLogout} />
       <main style={{ maxWidth: 1200, margin: "0 auto" }}>
         {pages[page]}
       </main>
