@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 
-const API = "https://staffalert.onrender.com/api";
+const API = "http://localhost:8000/api";
 
 // ── Pellissippi Theme ──────────────────────────────────────────────────────
 const theme = {
@@ -429,6 +429,41 @@ function CSVImport() {
       <p style={{ color: theme.gray, fontSize: 14, margin: "0 0 24px" }}>
         Upload a CSV to bulk-import student phone numbers into sections. Required columns: <strong>Phone</strong>, <strong>SectionCode</strong>
       </p>
+
+      {/* Self Enrollment Info */}
+      <div style={{
+        background: theme.white, borderRadius: 12,
+        border: `1px solid ${theme.grayLight}`, padding: 20, marginBottom: 24
+      }}>
+        <h2 style={{ fontSize: 16, fontWeight: 700, color: theme.blue, margin: "0 0 12px" }}>
+          📱 Student Self-Enrollment
+        </h2>
+        <p style={{ fontSize: 13, color: theme.gray, margin: "0 0 12px" }}>
+          Students can subscribe themselves by texting your Twilio number — no CSV needed.
+          Share these commands with your students.
+        </p>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          {[
+            { cmd: "JOIN CS101", desc: "Subscribe to a section" },
+            { cmd: "LEAVE CS101", desc: "Unsubscribe from a section" },
+            { cmd: "MYSECTIONS", desc: "See all subscriptions" },
+          ].map(item => (
+            <div key={item.cmd} style={{
+              background: theme.surface, borderRadius: 8, padding: 12,
+              border: `1px solid ${theme.grayLight}`, flex: 1, minWidth: 180
+            }}>
+              <code style={{
+                background: "#1E1E1E", color: "#00FF88",
+                padding: "4px 10px", borderRadius: 4,
+                fontSize: 13, display: "block", marginBottom: 6
+              }}>
+                {item.cmd}
+              </code>
+              <span style={{ fontSize: 12, color: theme.gray }}>{item.desc}</span>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Format Guide */}
       <div style={{
