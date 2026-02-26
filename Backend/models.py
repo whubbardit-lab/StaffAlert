@@ -66,3 +66,16 @@ class AuditLog(Base):
     entity_id = Column(Integer, nullable=True)
     details = Column(Text, nullable=True)
     ip_address = Column(String(50), nullable=True)
+
+
+class ScheduledAlert(Base):
+    __tablename__ = "scheduled_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    message = Column(Text, nullable=False)
+    section_code = Column(String(20), nullable=False)
+    priority_level = Column(String(20), default="NORMAL")
+    scheduled_for = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String(20), default="PENDING")  # PENDING, SENT, FAILED, CANCELLED
+    recipient_count = Column(Integer, default=0)
