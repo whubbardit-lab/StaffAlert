@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { BarChart, Bar, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 const API = "https://staffalert.onrender.com/api";
 
@@ -1592,13 +1593,258 @@ function SchedulePage() {
 }
 
 
-// ── Statistics Page (placeholder — built next) ─────────────────────────────
+// ── Statistics Page ────────────────────────────────────────────────────────
 function StatisticsPage() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const [Recharts, setRecharts] = useState(null);
+
+  useEffect(() => {
+    import("recharts").then(m => setRecharts(m)).catch(() => {});
+    fetch(`${API}/logs/stats/charts`)
+      .then(r => r.json())
+      .then(d => { setData(d); setLoading(false); })
+      .catch(() => { setError("Could not load statistics"); setLoading(false); });
+  }, []);
+
+  const COLORS = [theme.blue, theme.gold, "#10B981", "#8B5CF6", "#EF4444", "#F59E0B", "#06B6D4", "#EC4899"];
+    <div style={{
+      background: theme.white, borderRadius: 12,
+      border: `1px solid ${theme.grayLight}`,
+      padding: "20px", flex: 1, minWidth: 140
+    }}>
+      <div style={{ fontSize: 24, marginBottom: 8 }}>{icon}</div>
+      <div style={{ fontSize: 30, fontWeight: 900, color, lineHeight: 1 }}>{value}</div>
+      <div style={{ fontSize: 13, color: theme.gray, marginTop: 4 }}>{label}</div>
+      {sub && <div style={{ fontSize: 11, color: theme.gray, marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+
+  if (loading || !Recharts) return (
+    <div style={{ padding: 48, textAlign: "center", color: theme.gray }}>
+      <div style={{ fontSize: 32, marginBottom: 8 }}>📊</div>
+      <div>Loading statistics...</div>
+    </div>
+  );
+
+  if (error) return (
+    <div style={{ padding: 48, textAlign: "center", color: theme.danger }}>{error}</div>
+  );
+
+  const {
+    BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+    XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+    ResponsiveContainer, AreaChart, Area
+  } = Recharts;
+
+  const s = data.summary;
+  const chartDays = data.alerts_by_day.slice(-14);
+  const activeHours = data.alerts_by_hour.filter(h => h.alerts > 0);
+
   return (
-    <div style={{ padding: 24, textAlign: "center", paddingTop: 80 }}>
-      <div style={{ fontSize: 48, marginBottom: 12 }}>📊</div>
-      <h1 style={{ fontSize: 22, fontWeight: 800, color: theme.blue, margin: "0 0 8px" }}>Statistics</h1>
-      <p style={{ color: theme.gray }}>Charts and analytics — coming next.</p>
+    <div style={{ padding: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: theme.blue, margin: 0 }}>Statistics</h1>
+          <p style={{ color: theme.gray, fontSize: 14, margin: "4px 0 0" }}>Live analytics from your PAWS Alert system</p>
+        </div>
+        <button onClick={() => {
+          setLoading(true);
+          fetch(`${API}/logs/stats/charts`).then(r => r.json()).then(d => { setData(d); setLoading(false); });
+        }} style={{
+          background: theme.gold, border: "none", borderRadius: 8,
+          padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13, color: theme.blue
+        }}>↻ Refresh</button>
+      </div>
+
+      {/* Summary Cards */}
+      <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
+        {statCard("📡", "Total Alerts", s.total_alerts)}
+        {statCard("📱", "SMS Sent", s.total_sms)}
+        {statCard("✅", "Success Rate", `${s.success_rate}%`, null, theme.success)}
+        {statCard("🎓", "Active Students", s.active_students, `of ${s.total_students} total`)}
+        {statCard("📚", "Sections", s.total_sections)}
+      </div>
+
+      {/* Row 1: Alert Volume + Delivery Rate */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+
+        {/* Alert Volume Chart */}
+        <div style={{ background: theme.white, borderRadius: 12, border: `1px solid ${theme.grayLight}`, padding: 20 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: theme.blue, margin: "0 0 16px" }}>
+            📈 Alert Volume — Last 14 Days
+          </h3>
+          {chartDays.length === 0 ? (
+            <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: theme.gray, fontSize: 13 }}>
+              No alert data yet — send some alerts to see this chart
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={chartDays} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={theme.grayLight} />
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Bar dataKey="alerts" name="Alerts" fill={theme.blue} radius={[4,4,0,0]} />
+                <Bar dataKey="sms" name="SMS Sent" fill={theme.gold} radius={[4,4,0,0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* Delivery Success Rate */}
+        <div style={{ background: theme.white, borderRadius: 12, border: `1px solid ${theme.grayLight}`, padding: 20 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: theme.blue, margin: "0 0 16px" }}>
+            📬 Delivery Success Rate — Last 14 Days
+          </h3>
+          {data.delivery_rate.every(d => d.rate === null) ? (
+            <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: theme.gray, fontSize: 13 }}>
+              No delivery receipt data yet — receipts are saved for new alerts
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={data.delivery_rate.slice(-14)} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="successGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10B981" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#10B981" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke={theme.grayLight} />
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} unit="%" />
+                <Tooltip formatter={(v) => v !== null ? `${v}%` : "No data"} />
+                <Area type="monotone" dataKey="rate" name="Success %" stroke="#10B981" fill="url(#successGrad)" strokeWidth={2} dot={false} connectNulls />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+
+      {/* Row 2: Section Activity + Priority Breakdown */}
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16, marginBottom: 16 }}>
+
+        {/* Alerts by Section */}
+        <div style={{ background: theme.white, borderRadius: 12, border: `1px solid ${theme.grayLight}`, padding: 20 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: theme.blue, margin: "0 0 16px" }}>
+            📚 Most Active Sections
+          </h3>
+          {data.alerts_by_section.length === 0 ? (
+            <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: theme.gray, fontSize: 13 }}>
+              No section data yet
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={data.alerts_by_section} layout="vertical" margin={{ top: 0, right: 16, left: 20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={theme.grayLight} />
+                <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+                <YAxis type="category" dataKey="section" tick={{ fontSize: 11 }} width={60} />
+                <Tooltip />
+                <Bar dataKey="alerts" name="Alerts" fill={theme.blue} radius={[0,4,4,0]}>
+                  {data.alerts_by_section.map((_, i) => (
+                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* Priority Breakdown */}
+        <div style={{ background: theme.white, borderRadius: 12, border: `1px solid ${theme.grayLight}`, padding: 20 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: theme.blue, margin: "0 0 16px" }}>
+            🚨 Priority Breakdown
+          </h3>
+          {data.alerts_by_priority.length === 0 ? (
+            <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: theme.gray, fontSize: 13 }}>
+              No data yet
+            </div>
+          ) : (
+            <>
+              <ResponsiveContainer width="100%" height={160}>
+                <PieChart>
+                  <Pie data={data.alerts_by_priority} dataKey="count" nameKey="priority"
+                    cx="50%" cy="50%" outerRadius={65} innerRadius={35}>
+                    {data.alerts_by_priority.map((_, i) => (
+                      <Cell key={i} fill={
+                        _.priority === "EMERGENCY" ? "#EF4444" :
+                        _.priority === "URGENT" ? "#F59E0B" : theme.blue
+                      } />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                {data.alerts_by_priority.map(p => (
+                  <div key={p.priority} style={{ fontSize: 11, color: theme.gray, display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{
+                      width: 8, height: 8, borderRadius: "50%", display: "inline-block",
+                      background: p.priority === "EMERGENCY" ? "#EF4444" : p.priority === "URGENT" ? "#F59E0B" : theme.blue
+                    }}/>
+                    {p.priority} ({p.count})
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Row 3: Peak Hours + Section Enrollment */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+
+        {/* Peak Alert Hours */}
+        <div style={{ background: theme.white, borderRadius: 12, border: `1px solid ${theme.grayLight}`, padding: 20 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: theme.blue, margin: "0 0 16px" }}>
+            🕐 Peak Alert Hours
+          </h3>
+          {activeHours.length === 0 ? (
+            <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: theme.gray, fontSize: 13 }}>
+              No hourly data yet
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={data.alerts_by_hour} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={theme.grayLight} />
+                <XAxis dataKey="hour" tick={{ fontSize: 9 }} interval={3} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip />
+                <Bar dataKey="alerts" name="Alerts" fill={theme.gold} radius={[4,4,0,0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* Students per Section */}
+        <div style={{ background: theme.white, borderRadius: 12, border: `1px solid ${theme.grayLight}`, padding: 20 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: theme.blue, margin: "0 0 16px" }}>
+            🎓 Students per Section
+          </h3>
+          {data.section_enrollment.length === 0 ? (
+            <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: theme.gray, fontSize: 13 }}>
+              No enrolled students yet
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={data.section_enrollment} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={theme.grayLight} />
+                <XAxis dataKey="section" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip />
+                <Bar dataKey="students" name="Students" radius={[4,4,0,0]}>
+                  {data.section_enrollment.map((_, i) => (
+                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
