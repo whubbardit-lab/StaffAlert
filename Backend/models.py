@@ -79,3 +79,16 @@ class ScheduledAlert(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     status = Column(String(20), default="PENDING")  # PENDING, SENT, FAILED, CANCELLED
     recipient_count = Column(Integer, default=0)
+
+
+class DeliveryReceipt(Base):
+    __tablename__ = "delivery_receipts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    alert_log_id = Column(Integer, ForeignKey("alert_logs.id"), nullable=False)
+    phone_number = Column(String(20), nullable=False)
+    status = Column(String(20), nullable=False)
+    error_message = Column(Text, nullable=True)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+    alert_log = relationship("AlertLog", back_populates="receipts")
