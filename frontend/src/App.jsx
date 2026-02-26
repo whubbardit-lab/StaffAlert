@@ -51,7 +51,7 @@ function Badge({ label, color }) {
 
 // ── Nav ────────────────────────────────────────────────────────────────────
 function Navbar({ page, setPage, onLogout }) {
-  const tabs = ["Dashboard", "Send Alert", "Templates", "Staff", "Students", "Import", "Audit Log"];
+  const tabs = ["Dashboard", "Send Alert", "Schedule", "Templates", "Staff", "Students", "Import", "Audit Log"];
   return (
     <nav style={{
       background: theme.blue, color: theme.white,
@@ -1151,6 +1151,238 @@ function LoginScreen({ onLogin }) {
   );
 }
 
+// ── Schedule Page ──────────────────────────────────────────────────────────
+function SchedulePage() {
+  const [scheduled, setScheduled] = useState([]);
+  const [sections, setSections] = useState([]);
+  const [form, setForm] = useState({
+    message: "", section_code: "00000", priority_level: "NORMAL", scheduled_for: ""
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const fetchScheduled = async () => {
+    const res = await fetch(`${API}/scheduled/`);
+    setScheduled(await res.json());
+  };
+
+  useEffect(() => {
+    fetchScheduled();
+    fetch(`${API}/alerts/sections-list`).then(r => r.json()).then(setSections).catch(() => {});
+    const interval = setInterval(fetchScheduled, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleSchedule = async () => {
+    setError(""); setSuccess("");
+    if (!form.message.trim()) { setError("Message cannot be empty"); return; }
+    if (!form.scheduled_for) { setError("Please select a date and time"); return; }
+    if (form.message.length > 160) { setError("Message exceeds 160 characters"); return; }
+    setSaving(true);
+    try {
+      const res = await fetch(`${API}/scheduled/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...form, scheduled_for: new Date(form.scheduled_for).toISOString().slice(0, 19) })
+      });
+      const data = await res.json();
+      if (!res.ok) setError(data.detail || "Failed to schedule alert");
+      else {
+        setSuccess(`Alert scheduled for ${data.scheduled_for}`);
+        setForm({ message: "", section_code: "00000", priority_level: "NORMAL", scheduled_for: "" });
+        fetchScheduled();
+      }
+    } catch { setError("Could not reach backend"); }
+    finally { setSaving(false); }
+  };
+
+  const handleCancel = async (id) => {
+    if (!confirm("Cancel this scheduled alert?")) return;
+    await fetch(`${API}/scheduled/${id}`, { method: "DELETE" });
+    fetchScheduled();
+  };
+
+  const statusColors = {
+    PENDING:   { bg: "#EFF6FF", color: "#1D4ED8" },
+    SENT:      { bg: "#DCFCE7", color: "#166534" },
+    PARTIAL:   { bg: "#FEF9C3", color: "#854D0E" },
+    FAILED:    { bg: "#FEE2E2", color: "#991B1B" },
+    CANCELLED: { bg: "#F3F4F6", color: "#6B7280" },
+  };
+
+  const inputStyle = {
+    border: `1px solid ${theme.grayLight}`, borderRadius: 8,
+    padding: "10px 12px", fontSize: 14, width: "100%",
+    boxSizing: "border-box", outline: "none", fontFamily: "inherit"
+  };
+
+  const pending = scheduled.filter(a => a.status === "PENDING");
+  const past = scheduled.filter(a => a.status !== "PENDING");
+
+  return (
+    <div style={{ padding: 24 }}>
+      <h1 style={{ fontSize: 22, fontWeight: 800, color: theme.blue, margin: "0 0 6px" }}>
+        Schedule Alert
+      </h1>
+      <p style={{ color: theme.gray, fontSize: 14, margin: "0 0 24px" }}>
+        Set an alert to send automatically at a future date and time.
+      </p>
+
+      {/* Schedule Form */}
+      <div style={{ background: theme.white, borderRadius: 16, border: `1px solid ${theme.grayLight}`, padding: 24, marginBottom: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 700, color: theme.gray, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Send To
+            </label>
+            <select value={form.section_code} onChange={e => setForm(f => ({ ...f, section_code: e.target.value }))} style={inputStyle}>
+              {sections.map(s => <option key={s.code} value={s.code}>{s.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 700, color: theme.gray, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Priority
+            </label>
+            <div style={{ display: "flex", gap: 8 }}>
+              {["NORMAL", "URGENT", "EMERGENCY"].map(p => (
+                <button key={p} onClick={() => setForm(f => ({ ...f, priority_level: p }))} style={{
+                  flex: 1, padding: "10px",
+                  background: form.priority_level === p
+                    ? (p === "EMERGENCY" ? theme.danger : p === "URGENT" ? "#D97706" : theme.blue)
+                    : theme.grayLight,
+                  color: form.priority_level === p ? "white" : theme.gray,
+                  border: "none", borderRadius: 8, cursor: "pointer",
+                  fontWeight: 700, fontSize: 12
+                }}>{p}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 12, fontWeight: 700, color: theme.gray, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Date & Time
+          </label>
+          <input
+            type="datetime-local"
+            value={form.scheduled_for}
+            onChange={e => setForm(f => ({ ...f, scheduled_for: e.target.value }))}
+            style={inputStyle}
+            min={new Date().toISOString().slice(0, 16)}
+          />
+          <p style={{ fontSize: 11, color: theme.gray, margin: "4px 0 0" }}>
+            Times are in your local timezone. The server runs on UTC.
+          </p>
+        </div>
+
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ fontSize: 12, fontWeight: 700, color: theme.gray, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Message
+          </label>
+          <textarea rows={3} value={form.message}
+            onChange={e => setForm(f => ({ ...f, message: e.target.value }))}
+            placeholder="Type your scheduled message..."
+            style={{ ...inputStyle, resize: "vertical" }}
+          />
+          <div style={{ textAlign: "right", fontSize: 11, color: form.message.length > 140 ? theme.danger : theme.gray, marginTop: 4 }}>
+            {form.message.length}/160
+          </div>
+        </div>
+
+        {error && <div style={{ background: "#FEE2E2", color: theme.danger, borderRadius: 8, padding: "10px 14px", fontSize: 13, marginBottom: 12 }}>⚠ {error}</div>}
+        {success && <div style={{ background: "#DCFCE7", color: theme.success, borderRadius: 8, padding: "10px 14px", fontSize: 13, marginBottom: 12, fontWeight: 600 }}>✅ {success}</div>}
+
+        <button onClick={handleSchedule} disabled={saving} style={{
+          background: theme.blue, color: "white", border: "none",
+          borderRadius: 10, padding: "13px", fontSize: 15,
+          fontWeight: 700, cursor: saving ? "not-allowed" : "pointer",
+          width: "100%", opacity: saving ? 0.7 : 1
+        }}>
+          {saving ? "Scheduling..." : "🕐 Schedule Alert"}
+        </button>
+      </div>
+
+      {/* Pending Scheduled Alerts */}
+      {pending.length > 0 && (
+        <>
+          <h2 style={{ fontSize: 16, fontWeight: 700, color: theme.blue, margin: "0 0 12px" }}>
+            ⏳ Upcoming ({pending.length})
+          </h2>
+          <div style={{ display: "grid", gap: 12, marginBottom: 24 }}>
+            {pending.map(a => (
+              <div key={a.id} style={{
+                background: theme.white, borderRadius: 12,
+                border: `1px solid #BFDBFE`, padding: 16,
+                display: "flex", justifyContent: "space-between", alignItems: "center"
+              }}>
+                <div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontWeight: 700, fontSize: 14, color: theme.blue }}>{a.section_code}</span>
+                    <Badge label={a.priority_level} />
+                    <span style={{ fontSize: 12, color: theme.gray }}>🕐 {a.scheduled_for}</span>
+                  </div>
+                  <p style={{ fontSize: 13, color: "#374151", margin: 0 }}>{a.message}</p>
+                </div>
+                <button onClick={() => handleCancel(a.id)} style={{
+                  background: "#FEE2E2", color: theme.danger,
+                  border: "none", borderRadius: 6, padding: "6px 14px",
+                  cursor: "pointer", fontWeight: 600, fontSize: 13, marginLeft: 16, whiteSpace: "nowrap"
+                }}>Cancel</button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Past Scheduled Alerts */}
+      {past.length > 0 && (
+        <>
+          <h2 style={{ fontSize: 16, fontWeight: 700, color: theme.gray, margin: "0 0 12px" }}>
+            History
+          </h2>
+          <div style={{ background: theme.white, borderRadius: 12, border: `1px solid ${theme.grayLight}`, overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: theme.surface }}>
+                  {["Scheduled For", "Section", "Message", "Status", "Recipients"].map(h => (
+                    <th key={h} style={{ padding: "10px 16px", fontSize: 12, fontWeight: 700, color: theme.gray, textAlign: "left", textTransform: "uppercase" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {past.map((a, i) => {
+                  const c = statusColors[a.status] || statusColors.PENDING;
+                  return (
+                    <tr key={a.id} style={{ borderTop: `1px solid ${theme.grayLight}` }}>
+                      <td style={{ padding: "10px 16px", fontSize: 13, color: theme.gray }}>{a.scheduled_for}</td>
+                      <td style={{ padding: "10px 16px", fontSize: 13, fontWeight: 600, color: theme.blue }}>{a.section_code}</td>
+                      <td style={{ padding: "10px 16px", fontSize: 13, color: "#374151", maxWidth: 300 }}>{a.message}</td>
+                      <td style={{ padding: "10px 16px" }}>
+                        <span style={{ background: c.bg, color: c.color, padding: "2px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700 }}>{a.status}</span>
+                      </td>
+                      <td style={{ padding: "10px 16px", fontSize: 13, color: theme.gray }}>{a.recipient_count || "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {pending.length === 0 && past.length === 0 && (
+        <div style={{ textAlign: "center", padding: 48, color: theme.gray }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>🕐</div>
+          <div style={{ fontWeight: 600 }}>No scheduled alerts yet</div>
+          <div style={{ fontSize: 13, marginTop: 4 }}>Use the form above to schedule your first alert</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 // ── Audit Log Page ─────────────────────────────────────────────────────────
 function AuditLogPage() {
   const [logs, setLogs] = useState([]);
@@ -1245,6 +1477,7 @@ export default function App() {
   const pages = {
     Dashboard: <Dashboard />,
     "Send Alert": <SendAlert />,
+    Schedule: <SchedulePage />,
     Templates: <TemplatesPage />,
     Staff: <StaffManager />,
     Students: <StudentsPage />,
