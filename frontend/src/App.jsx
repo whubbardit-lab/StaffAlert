@@ -1610,6 +1610,8 @@ function StatisticsPage() {
   }, []);
 
   const COLORS = [theme.blue, theme.gold, "#10B981", "#8B5CF6", "#EF4444", "#F59E0B", "#06B6D4", "#EC4899"];
+
+  const statCard = (icon, label, value, sub = null, color = theme.blue) => (
     <div style={{
       background: theme.white, borderRadius: 12,
       border: `1px solid ${theme.grayLight}`,
