@@ -99,3 +99,126 @@ def export_students_csv(db: Session = Depends(get_db)):
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+
+@router.get("/stats/charts")
+def get_chart_data(db: Session = Depends(get_db)):
+    """Rich statistics data for the charts page."""
+    from sqlalchemy import func, extract
+    from collections import defaultdict
+
+    logs = db.query(AlertLog).order_by(AlertLog.timestamp.asc()).all()
+
+    # ── Alerts by day (last 30 days) ───────────────────────────────────────
+    from datetime import timedelta
+    today = datetime.utcnow().date()
+    thirty_days_ago = today - timedelta(days=29)
+
+    day_counts = defaultdict(lambda: {"alerts": 0, "sms": 0})
+    for log in logs:
+        if log.timestamp and log.timestamp.date() >= thirty_days_ago:
+            day = log.timestamp.strftime("%m/%d")
+            day_counts[day]["alerts"] += 1
+            day_counts[day]["sms"] += log.recipient_count or 0
+
+    # Fill in missing days
+    alerts_by_day = []
+    for i in range(30):
+        day = (thirty_days_ago + timedelta(days=i)).strftime("%m/%d")
+        alerts_by_day.append({
+            "date": day,
+            "alerts": day_counts[day]["alerts"],
+            "sms": day_counts[day]["sms"]
+        })
+
+    # ── Alerts by section (top 8) ──────────────────────────────────────────
+    section_counts = defaultdict(int)
+    for log in logs:
+        section_counts[log.section_code or "Unknown"] += 1
+
+    alerts_by_section = sorted(
+        [{"section": k, "alerts": v} for k, v in section_counts.items()],
+        key=lambda x: x["alerts"], reverse=True
+    )[:8]
+
+    # ── Alerts by hour of day ──────────────────────────────────────────────
+    hour_counts = defaultdict(int)
+    for log in logs:
+        if log.timestamp:
+            hour_counts[log.timestamp.hour] += 1
+
+    alerts_by_hour = [
+        {"hour": f"{h:02d}:00", "alerts": hour_counts[h]}
+        for h in range(24)
+    ]
+
+    # ── Alerts by priority ─────────────────────────────────────────────────
+    priority_counts = defaultdict(int)
+    for log in logs:
+        priority_counts[log.priority_level or "NORMAL"] += 1
+
+    alerts_by_priority = [
+        {"priority": k, "count": v}
+        for k, v in priority_counts.items()
+    ]
+
+    # ── Delivery success rate by day (last 30 days) ────────────────────────
+    delivery_by_day = defaultdict(lambda: {"sent": 0, "failed": 0})
+    from models import DeliveryReceipt
+    receipts = db.query(DeliveryReceipt).all()
+    for r in receipts:
+        if r.timestamp and r.timestamp.date() >= thirty_days_ago:
+            day = r.timestamp.strftime("%m/%d")
+            if r.status == "sent":
+                delivery_by_day[day]["sent"] += 1
+            else:
+                delivery_by_day[day]["failed"] += 1
+
+    delivery_rate = []
+    for i in range(30):
+        day = (thirty_days_ago + timedelta(days=i)).strftime("%m/%d")
+        sent = delivery_by_day[day]["sent"]
+        failed = delivery_by_day[day]["failed"]
+        total = sent + failed
+        delivery_rate.append({
+            "date": day,
+            "sent": sent,
+            "failed": failed,
+            "rate": round((sent / total * 100), 1) if total > 0 else None
+        })
+
+    # ── Student enrollment summary ─────────────────────────────────────────
+    total_students = db.query(Subscription).count()
+    active_students = db.query(Subscription).filter(Subscription.is_active == True).count()
+    total_sections = db.query(Section).count()
+
+    # Students per section
+    section_enrollment = []
+    sections = db.query(Section).all()
+    for s in sections:
+        count = db.query(Subscription).filter(
+            Subscription.section_id == s.id,
+            Subscription.is_active == True
+        ).count()
+        if count > 0:
+            section_enrollment.append({"section": s.section_code, "students": count})
+    section_enrollment.sort(key=lambda x: x["students"], reverse=True)
+
+    return {
+        "summary": {
+            "total_alerts": len(logs),
+            "total_sms": sum(l.recipient_count or 0 for l in logs),
+            "total_students": total_students,
+            "active_students": active_students,
+            "total_sections": total_sections,
+            "success_rate": round(
+                sum(1 for l in logs if l.status == "SENT") / len(logs) * 100, 1
+            ) if logs else 0
+        },
+        "alerts_by_day": alerts_by_day,
+        "alerts_by_section": alerts_by_section,
+        "alerts_by_hour": alerts_by_hour,
+        "alerts_by_priority": alerts_by_priority,
+        "delivery_rate": delivery_rate,
+        "section_enrollment": section_enrollment
+    }
