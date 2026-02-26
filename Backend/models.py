@@ -54,6 +54,7 @@ class AlertLog(Base):
     status = Column(String(20), default="SENT")
 
     sender = relationship("Staff", back_populates="alert_logs")
+    receipts = relationship("DeliveryReceipt", back_populates="alert_log")
 
 
 class AuditLog(Base):
