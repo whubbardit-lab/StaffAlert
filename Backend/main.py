@@ -5,7 +5,8 @@ from database import engine
 import models
 import time
 from collections import defaultdict
-import os
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from contextlib import asynccontextmanager
 
 # Create all tables on startup
 models.Base.metadata.create_all(bind=engine)
@@ -17,11 +18,24 @@ from routes.sections import router as sections_router
 from routes.logs import router as logs_router
 from routes.alerts import router as alerts_router
 from routes.auth import router as auth_router
+from routes.schedule import router as schedule_router
+from routes.schedule import check_and_fire_due_alerts
+
+# ── Scheduler setup ────────────────────────────────────────────────────────
+scheduler = AsyncIOScheduler()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler.add_job(check_and_fire_due_alerts, "interval", minutes=1, id="alert_scheduler")
+    scheduler.start()
+    yield
+    scheduler.shutdown()
 
 app = FastAPI(
     title="PAWS Alert API",
     description="SMS Emergency Alert System for Pellissippi State Community College",
-    version="2.0.0"
+    version="2.0.0",
+    lifespan=lifespan
 )
 
 # ── CORS ───────────────────────────────────────────────────────────────────
@@ -39,16 +53,13 @@ app.add_middleware(
 )
 
 # ── Rate Limiting ──────────────────────────────────────────────────────────
-# Simple in-memory rate limiter
-# Limits: 10 requests/minute for auth, 60 requests/minute for everything else
 _request_counts = defaultdict(list)
 
 RATE_LIMITS = {
-    "/api/auth/login": (5, 60),    # 5 attempts per 60 seconds
-    "/api/alerts/send": (10, 60),  # 10 alerts per 60 seconds
-    "default": (60, 60),           # 60 requests per 60 seconds
+    "/api/auth/login": (5, 60),
+    "/api/alerts/send": (10, 60),
+    "default": (60, 60),
 }
-
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
@@ -56,7 +67,6 @@ async def rate_limit_middleware(request: Request, call_next):
     path = request.url.path
     now = time.time()
 
-    # Get limit for this path
     if path in RATE_LIMITS:
         max_requests, window = RATE_LIMITS[path]
     else:
@@ -74,7 +84,6 @@ async def rate_limit_middleware(request: Request, call_next):
     _request_counts[key].append(now)
     return await call_next(request)
 
-
 # ── Security Headers ───────────────────────────────────────────────────────
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
@@ -85,7 +94,6 @@ async def security_headers(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     return response
 
-
 # ── Routers ────────────────────────────────────────────────────────────────
 app.include_router(webhook_router)
 app.include_router(auth_router, prefix="/api")
@@ -93,12 +101,11 @@ app.include_router(staff_router, prefix="/api")
 app.include_router(sections_router, prefix="/api")
 app.include_router(logs_router, prefix="/api")
 app.include_router(alerts_router, prefix="/api")
-
+app.include_router(schedule_router, prefix="/api")
 
 @app.get("/")
 def root():
     return {"status": "PAWS Alert is running", "version": "2.0.0"}
-
 
 @app.get("/health")
 def health_check():
