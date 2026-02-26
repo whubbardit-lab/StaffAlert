@@ -51,43 +51,150 @@ function Badge({ label, color }) {
 
 // ── Nav ────────────────────────────────────────────────────────────────────
 function Navbar({ page, setPage, onLogout }) {
-  const tabs = ["Dashboard", "Send Alert", "Schedule", "Templates", "Staff", "Students", "Import", "Audit Log"];
+  const [openMenu, setOpenMenu] = useState(null);
+
+  const groups = [
+    {
+      label: "Dashboard",
+      single: true,
+      page: "Dashboard",
+      icon: "📡"
+    },
+    {
+      label: "Alerts",
+      icon: "📢",
+      items: [
+        { label: "Send Alert", page: "Send Alert", icon: "📤" },
+        { label: "Schedule", page: "Schedule", icon: "🕐" },
+        { label: "Templates", page: "Templates", icon: "📋" },
+      ]
+    },
+    {
+      label: "People",
+      icon: "👥",
+      items: [
+        { label: "Staff", page: "Staff", icon: "👤" },
+        { label: "Students", page: "Students", icon: "🎓" },
+        { label: "Import", page: "Import", icon: "⬆" },
+      ]
+    },
+    {
+      label: "Admin",
+      icon: "🔒",
+      items: [
+        { label: "Audit Log", page: "Audit Log", icon: "📜" },
+        { label: "Statistics", page: "Statistics", icon: "📊" },
+      ]
+    },
+  ];
+
+  const isGroupActive = (group) => {
+    if (group.single) return page === group.page;
+    return group.items?.some(i => i.page === page);
+  };
+
   return (
     <nav style={{
       background: theme.blue, color: theme.white,
       display: "flex", alignItems: "center",
       padding: "0 24px", height: 60,
-      boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
+      boxShadow: "0 2px 12px rgba(0,0,0,0.25)",
+      position: "relative", zIndex: 100
     }} role="navigation" aria-label="Main navigation">
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginRight: 40 }}>
+
+      {/* Logo */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginRight: 32 }}>
         <img src="/paws-logo.png" alt="PAWS" style={{ height: 44, width: "auto" }} />
         <span style={{ fontWeight: 900, fontSize: 22, letterSpacing: "-0.02em", color: "white" }}>
           PAWS<span style={{ color: theme.gold }}> Alert</span>
         </span>
       </div>
 
-      <div style={{ display: "flex", gap: 4 }}>
-        {tabs.map(t => (
-          <button key={t} onClick={() => setPage(t)}
-            aria-current={page === t ? "page" : undefined}
-            style={{
-            background: page === t ? theme.gold : "transparent",
-            color: page === t ? theme.blue : "rgba(255,255,255,0.75)",
-            border: "none", padding: "6px 18px",
-            borderRadius: 6, cursor: "pointer",
-            fontWeight: page === t ? 700 : 500,
-            fontSize: 14, transition: "all 0.15s"
-          }}>{t}</button>
+      {/* Nav Groups */}
+      <div style={{ display: "flex", gap: 2 }}>
+        {groups.map(group => (
+          <div key={group.label} style={{ position: "relative" }}>
+            {group.single ? (
+              <button
+                onClick={() => { setPage(group.page); setOpenMenu(null); }}
+                aria-current={page === group.page ? "page" : undefined}
+                style={{
+                  background: page === group.page ? theme.gold : "transparent",
+                  color: page === group.page ? theme.blue : "rgba(255,255,255,0.85)",
+                  border: "none", padding: "8px 16px",
+                  borderRadius: 6, cursor: "pointer",
+                  fontWeight: page === group.page ? 700 : 500,
+                  fontSize: 14, transition: "all 0.15s",
+                  display: "flex", alignItems: "center", gap: 6
+                }}>
+                {group.icon} {group.label}
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() => setOpenMenu(openMenu === group.label ? null : group.label)}
+                  onBlur={() => setTimeout(() => setOpenMenu(null), 150)}
+                  style={{
+                    background: isGroupActive(group) ? theme.gold : openMenu === group.label ? "rgba(255,255,255,0.15)" : "transparent",
+                    color: isGroupActive(group) ? theme.blue : "rgba(255,255,255,0.85)",
+                    border: "none", padding: "8px 16px",
+                    borderRadius: 6, cursor: "pointer",
+                    fontWeight: isGroupActive(group) ? 700 : 500,
+                    fontSize: 14, transition: "all 0.15s",
+                    display: "flex", alignItems: "center", gap: 6
+                  }}>
+                  {group.icon} {group.label}
+                  <span style={{ fontSize: 10, opacity: 0.7, marginLeft: 2 }}>
+                    {openMenu === group.label ? "▲" : "▼"}
+                  </span>
+                </button>
+
+                {/* Dropdown */}
+                {openMenu === group.label && (
+                  <div style={{
+                    position: "absolute", top: "calc(100% + 8px)", left: 0,
+                    background: "white", borderRadius: 10,
+                    boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
+                    minWidth: 180, overflow: "hidden",
+                    border: `1px solid ${theme.grayLight}`
+                  }}>
+                    {group.items.map(item => (
+                      <button key={item.page}
+                        onClick={() => { setPage(item.page); setOpenMenu(null); }}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 10,
+                          width: "100%", padding: "11px 16px",
+                          background: page === item.page ? "#EFF6FF" : "white",
+                          color: page === item.page ? theme.blue : "#374151",
+                          border: "none", cursor: "pointer",
+                          fontSize: 14, fontWeight: page === item.page ? 700 : 400,
+                          textAlign: "left", transition: "background 0.1s",
+                          borderBottom: `1px solid ${theme.grayLight}`
+                        }}
+                        onMouseEnter={e => { if (page !== item.page) e.currentTarget.style.background = "#F9FAFB"; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = page === item.page ? "#EFF6FF" : "white"; }}
+                      >
+                        <span>{item.icon}</span>
+                        <span>{item.label}</span>
+                        {page === item.page && <span style={{ marginLeft: "auto", color: theme.blue }}>●</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         ))}
       </div>
 
+      {/* Right side */}
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 16 }}>
-        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
-          Pellissippi State Community College
+        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
+          Pellissippi State
         </span>
         <button onClick={onLogout} style={{
           background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)",
-          color: "rgba(255,255,255,0.8)", borderRadius: 6, padding: "5px 14px",
+          color: "rgba(255,255,255,0.8)", borderRadius: 6, padding: "6px 14px",
           cursor: "pointer", fontSize: 13, fontWeight: 600
         }}>
           Sign Out
@@ -102,6 +209,20 @@ function Dashboard() {
   const [logs, setLogs] = useState([]);
   const [stats, setStats] = useState({});
   const [loading, setLoading] = useState(true);
+  const [selectedAlert, setSelectedAlert] = useState(null);
+  const [receipts, setReceipts] = useState(null);
+  const [receiptsLoading, setReceiptsLoading] = useState(false);
+
+  const fetchReceipts = async (alertId) => {
+    setSelectedAlert(alertId);
+    setReceiptsLoading(true);
+    setReceipts(null);
+    try {
+      const res = await fetch(`${API}/receipts/${alertId}`);
+      setReceipts(await res.json());
+    } catch { setReceipts({ error: "Could not load receipts" }); }
+    finally { setReceiptsLoading(false); }
+  };
 
   const fetchData = useCallback(async () => {
     try {
@@ -205,10 +326,14 @@ function Dashboard() {
             </thead>
             <tbody>
               {logs.map((log, i) => (
-                <tr key={log.id} style={{
+                <tr key={log.id} onClick={() => fetchReceipts(log.id)} style={{
                   borderTop: `1px solid ${theme.grayLight}`,
-                  background: i % 2 === 0 ? theme.white : "#FAFAFA"
-                }}>
+                  background: i % 2 === 0 ? theme.white : "#FAFAFA",
+                  cursor: "pointer", transition: "background 0.1s"
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = "#EFF6FF"}
+                onMouseLeave={e => e.currentTarget.style.background = i % 2 === 0 ? theme.white : "#FAFAFA"}
+                >
                   <td style={{ padding: "10px 16px", fontSize: 13, color: theme.gray, whiteSpace: "nowrap" }}>
                     {timeAgo(log.timestamp)}
                   </td>
@@ -233,6 +358,90 @@ function Dashboard() {
           </table>
         )}
       </div>
+
+      {/* Receipt Modal */}
+      {selectedAlert && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          zIndex: 1000, padding: 24
+        }} onClick={() => setSelectedAlert(null)}>
+          <div style={{
+            background: theme.white, borderRadius: 16,
+            width: "100%", maxWidth: 600, maxHeight: "80vh",
+            overflow: "auto", padding: 24
+          }} onClick={e => e.stopPropagation()}>
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h2 style={{ fontSize: 18, fontWeight: 800, color: theme.blue, margin: 0 }}>Delivery Receipts</h2>
+              <button onClick={() => setSelectedAlert(null)} style={{
+                background: theme.grayLight, border: "none", borderRadius: 6,
+                padding: "4px 12px", cursor: "pointer", fontWeight: 700
+              }}>✕ Close</button>
+            </div>
+
+            {receiptsLoading && <p style={{ color: theme.gray }}>Loading receipts...</p>}
+
+            {receipts && !receiptsLoading && (
+              <>
+                <div style={{ background: theme.surface, borderRadius: 8, padding: 12, marginBottom: 16 }}>
+                  <p style={{ margin: "0 0 4px", fontSize: 13, color: "#374151" }}><strong>Message:</strong> {receipts.message}</p>
+                  <p style={{ margin: 0, fontSize: 12, color: theme.gray }}>Section: {receipts.section} · {receipts.timestamp}</p>
+                </div>
+
+                {/* Summary */}
+                <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+                  {[
+                    { label: "Total", value: receipts.total, color: theme.blue },
+                    { label: "Delivered", value: receipts.sent_count, color: theme.success },
+                    { label: "Failed", value: receipts.failed_count, color: theme.danger },
+                  ].map(s => (
+                    <div key={s.label} style={{
+                      flex: 1, background: theme.surface, borderRadius: 8,
+                      padding: "10px", textAlign: "center"
+                    }}>
+                      <div style={{ fontSize: 22, fontWeight: 900, color: s.color }}>{s.value}</div>
+                      <div style={{ fontSize: 12, color: theme.gray }}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Receipt List */}
+                {receipts.receipts && receipts.receipts.length > 0 ? (
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: theme.surface }}>
+                        <th style={{ padding: "8px 12px", textAlign: "left", color: theme.gray, fontWeight: 700 }}>Phone</th>
+                        <th style={{ padding: "8px 12px", textAlign: "left", color: theme.gray, fontWeight: 700 }}>Status</th>
+                        <th style={{ padding: "8px 12px", textAlign: "left", color: theme.gray, fontWeight: 700 }}>Error</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {receipts.receipts.map((r, i) => (
+                        <tr key={i} style={{ borderTop: `1px solid ${theme.grayLight}` }}>
+                          <td style={{ padding: "8px 12px", fontFamily: "monospace" }}>{r.phone}</td>
+                          <td style={{ padding: "8px 12px" }}>
+                            <span style={{
+                              background: r.status === "sent" ? "#DCFCE7" : "#FEE2E2",
+                              color: r.status === "sent" ? theme.success : theme.danger,
+                              padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700
+                            }}>{r.status.toUpperCase()}</span>
+                          </td>
+                          <td style={{ padding: "8px 12px", color: theme.danger, fontSize: 12 }}>
+                            {r.error || "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p style={{ color: theme.gray, fontSize: 13 }}>No individual receipts recorded for this alert. Receipts are saved for alerts sent after this feature was enabled.</p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1383,6 +1592,18 @@ function SchedulePage() {
 }
 
 
+// ── Statistics Page (placeholder — built next) ─────────────────────────────
+function StatisticsPage() {
+  return (
+    <div style={{ padding: 24, textAlign: "center", paddingTop: 80 }}>
+      <div style={{ fontSize: 48, marginBottom: 12 }}>📊</div>
+      <h1 style={{ fontSize: 22, fontWeight: 800, color: theme.blue, margin: "0 0 8px" }}>Statistics</h1>
+      <p style={{ color: theme.gray }}>Charts and analytics — coming next.</p>
+    </div>
+  );
+}
+
+
 // ── Audit Log Page ─────────────────────────────────────────────────────────
 function AuditLogPage() {
   const [logs, setLogs] = useState([]);
@@ -1483,6 +1704,7 @@ export default function App() {
     Students: <StudentsPage />,
     Import: <CSVImport />,
     "Audit Log": <AuditLogPage />,
+    Statistics: <StatisticsPage />,
   };
 
   if (!loggedIn) {
