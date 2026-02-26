@@ -51,14 +51,14 @@ function Badge({ label, color }) {
 
 // ── Nav ────────────────────────────────────────────────────────────────────
 function Navbar({ page, setPage, onLogout }) {
-  const tabs = ["Dashboard", "Send Alert", "Templates", "Staff", "Students", "Import"];
+  const tabs = ["Dashboard", "Send Alert", "Templates", "Staff", "Students", "Import", "Audit Log"];
   return (
     <nav style={{
       background: theme.blue, color: theme.white,
       display: "flex", alignItems: "center",
       padding: "0 24px", height: 60,
       boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
-    }}>
+    }} role="navigation" aria-label="Main navigation">
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginRight: 40 }}>
         <img src="/paws-logo.png" alt="PAWS" style={{ height: 44, width: "auto" }} />
         <span style={{ fontWeight: 900, fontSize: 22, letterSpacing: "-0.02em", color: "white" }}>
@@ -68,7 +68,9 @@ function Navbar({ page, setPage, onLogout }) {
 
       <div style={{ display: "flex", gap: 4 }}>
         {tabs.map(t => (
-          <button key={t} onClick={() => setPage(t)} style={{
+          <button key={t} onClick={() => setPage(t)}
+            aria-current={page === t ? "page" : undefined}
+            style={{
             background: page === t ? theme.gold : "transparent",
             color: page === t ? theme.blue : "rgba(255,255,255,0.75)",
             border: "none", padding: "6px 18px",
@@ -1149,6 +1151,87 @@ function LoginScreen({ onLogin }) {
   );
 }
 
+// ── Audit Log Page ─────────────────────────────────────────────────────────
+function AuditLogPage() {
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const token = localStorage.getItem("paws_token");
+    fetch(`${API}/auth/audit-logs`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.json())
+      .then(data => { setLogs(data); setLoading(false); })
+      .catch(() => { setError("Could not load audit logs"); setLoading(false); });
+  }, []);
+
+  const actionColor = (action) => {
+    if (action.includes("DELETE")) return { bg: "#FEE2E2", color: "#991B1B" };
+    if (action.includes("FAILED")) return { bg: "#FEE2E2", color: "#991B1B" };
+    if (action.includes("CREATE")) return { bg: "#DCFCE7", color: "#166534" };
+    if (action.includes("LOGIN_SUCCESS")) return { bg: "#DCFCE7", color: "#166534" };
+    if (action.includes("TOGGLE")) return { bg: "#FEF9C3", color: "#854D0E" };
+    return { bg: "#EFF6FF", color: "#1D4ED8" };
+  };
+
+  return (
+    <div style={{ padding: 24 }} role="main" aria-label="Audit Log">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: theme.blue, margin: 0 }}>Audit Log</h1>
+          <p style={{ color: theme.gray, fontSize: 14, margin: "4px 0 0" }}>
+            Every action taken in the system with timestamp and IP address
+          </p>
+        </div>
+        <a href={`${API}/auth/audit-logs?limit=1000`} style={{
+          background: theme.grayLight, color: theme.gray,
+          borderRadius: 8, padding: "8px 16px",
+          fontWeight: 600, fontSize: 13, textDecoration: "none"
+        }}>⬇ Export</a>
+      </div>
+
+      {loading && <p style={{ color: theme.gray }}>Loading...</p>}
+      {error && <p style={{ color: theme.danger }}>{error}</p>}
+
+      {!loading && !error && (
+        <div style={{ background: theme.white, borderRadius: 16, border: `1px solid ${theme.grayLight}`, overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }} aria-label="Audit log entries">
+            <thead>
+              <tr style={{ background: theme.blue }}>
+                {["Timestamp", "Action", "Details", "IP Address"].map(h => (
+                  <th key={h} scope="col" style={{ padding: "12px 16px", color: "white", fontWeight: 700, fontSize: 13, textAlign: "left" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {logs.length === 0 && (
+                <tr><td colSpan={4} style={{ padding: 24, textAlign: "center", color: theme.gray }}>No audit logs yet</td></tr>
+              )}
+              {logs.map((log, i) => {
+                const c = actionColor(log.action);
+                return (
+                  <tr key={log.id} style={{ background: i % 2 === 0 ? theme.white : theme.surface }}>
+                    <td style={{ padding: "10px 16px", fontSize: 13, color: theme.gray, whiteSpace: "nowrap" }}>{log.timestamp}</td>
+                    <td style={{ padding: "10px 16px" }}>
+                      <span style={{ background: c.bg, color: c.color, padding: "2px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+                        {log.action}
+                      </span>
+                    </td>
+                    <td style={{ padding: "10px 16px", fontSize: 13, color: "#374151" }}>{log.details}</td>
+                    <td style={{ padding: "10px 16px", fontSize: 12, color: theme.gray, fontFamily: "monospace" }}>{log.ip_address}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Root App ────────────────────────────────────────────────────────────────
 export default function App() {
   const [page, setPage] = useState("Dashboard");
@@ -1166,6 +1249,7 @@ export default function App() {
     Staff: <StaffManager />,
     Students: <StudentsPage />,
     Import: <CSVImport />,
+    "Audit Log": <AuditLogPage />,
   };
 
   if (!loggedIn) {
@@ -1175,7 +1259,7 @@ export default function App() {
   return (
     <div style={{ minHeight: "100vh", background: theme.surface, fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
       <Navbar page={page} setPage={setPage} onLogout={handleLogout} />
-      <main style={{ maxWidth: 1200, margin: "0 auto" }}>
+      <main style={{ maxWidth: 1200, margin: "0 auto" }} role="main">
         {pages[page]}
       </main>
     </div>
