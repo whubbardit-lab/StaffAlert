@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from database import get_db
-from models import AlertLog, Staff, Subscription, Section
+from models import AlertLog, Staff, Subscription, Section, DeliveryReceipt
 from schemas import AlertLogOut
 from typing import List
-from datetime import datetime
+from datetime import datetime, timedelta
+from collections import defaultdict
 import csv
 import io
 
@@ -104,13 +105,10 @@ def export_students_csv(db: Session = Depends(get_db)):
 @router.get("/stats/charts")
 def get_chart_data(db: Session = Depends(get_db)):
     """Rich statistics data for the charts page."""
-    from sqlalchemy import func, extract
-    from collections import defaultdict
 
     logs = db.query(AlertLog).order_by(AlertLog.timestamp.asc()).all()
 
     # ── Alerts by day (last 30 days) ───────────────────────────────────────
-    from datetime import timedelta
     today = datetime.utcnow().date()
     thirty_days_ago = today - timedelta(days=29)
 
@@ -164,7 +162,6 @@ def get_chart_data(db: Session = Depends(get_db)):
 
     # ── Delivery success rate by day (last 30 days) ────────────────────────
     delivery_by_day = defaultdict(lambda: {"sent": 0, "failed": 0})
-    from models import DeliveryReceipt
     receipts = db.query(DeliveryReceipt).all()
     for r in receipts:
         if r.timestamp and r.timestamp.date() >= thirty_days_ago:
