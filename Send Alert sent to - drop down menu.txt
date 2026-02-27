@@ -1,0 +1,18 @@
+Send Alert: sent to - drop down menu for section fill up
+
+People: Section Codes Section add/delete etc.
+
+Import: 
+1. Section Codes and Staff csv 
+2.ability to add manually without csv import
+
+Dashboard: 
+1. Sections on Dash still syncs with total alerts sent of something
+2. the 4 stats above need to be real updates 
+
+Schedule Alerts: Time appears to not sync to time zone or something like that (enter 12:00 PM appears as 6:30)
+
+BIG CHANGES: 
+1. SMS Interaction!!! needs to be easy
+2. self join needs class code as well as a unique requested join code that is created and SMS sent to registered staff that is good for a week so the student can share with students.
+
