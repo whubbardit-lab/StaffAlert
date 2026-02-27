@@ -538,15 +538,20 @@ function Dashboard({ setPage }) {
 }
 
 // ── Send Alert ─────────────────────────────────────────────────────────────
-function SendAlert({ toast }) {
+function SendAlert({ toast, setPage }) {
   const [sections, setSections] = useState([]);
+  const [recentLogs, setRecentLogs] = useState([]);
+  const [templates, setTemplates] = useState([]);
   const [section, setSection] = useState("00000");
   const [priority, setPriority] = useState("NORMAL");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const [sentSuccess, setSentSuccess] = useState(false);
 
   useEffect(() => {
     fetch(`${API}/alerts/sections-list`).then(r => r.json()).then(setSections).catch(() => {});
+    fetch(`${API}/logs/`).then(r => r.json()).then(d => setRecentLogs(d.slice(0, 3))).catch(() => {});
+    fetch(`${API}/alerts/templates`).then(r => r.json()).then(setTemplates).catch(() => {});
   }, []);
 
   const handleSend = async () => {
@@ -554,54 +559,316 @@ function SendAlert({ toast }) {
     if (message.length > 160) { toast("Message exceeds 160 characters", "error"); return; }
     setSending(true);
     try {
-      const res = await fetch(`${API}/alerts/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ section_code: section, priority_level: priority, message }) });
+      const res = await fetch(`${API}/alerts/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ section_code: section, priority_level: priority, message })
+      });
       const data = await res.json();
-      if (!res.ok) toast(data.detail || "Failed to send", "error");
-      else { toast(`✓ Sent to ${data.recipient_count} recipients`, "success"); setMessage(""); }
+      if (!res.ok) {
+        toast(data.detail || "Failed to send", "error");
+      } else {
+        toast(`✓ Sent to ${data.recipient_count} recipients`, "success");
+        setSentSuccess(true);
+        setMessage("");
+        setTimeout(() => setSentSuccess(false), 3000);
+        fetch(`${API}/logs/`).then(r => r.json()).then(d => setRecentLogs(d.slice(0, 3))).catch(() => {});
+      }
     } catch { toast("Could not reach backend", "error"); }
     finally { setSending(false); }
   };
 
-  const prioBtns = [{ label: "Normal", val: "NORMAL" }, { label: "Urgent", val: "URGENT" }, { label: "🚨 Emergency", val: "EMERGENCY" }];
-  const prioColors = { NORMAL: "#93C5FD", URGENT: "#FCD34D", EMERGENCY: "#FCA5A5" };
+  // Derived values
+  const selectedSection = sections.find(s => s.code === section);
+  const recipientCount = selectedSection?.count ?? 0;
+  const charPct = Math.min(100, (message.length / 160) * 100);
+  const prefix = priority === "EMERGENCY" ? "[EMERGENCY] " : priority === "URGENT" ? "[URGENT] " : "[CAMPUS] ";
+  const fullMsg = prefix + (message || "");
+  const segments = Math.ceil(Math.max(fullMsg.length, 1) / 160);
+  const estCost = (recipientCount * segments * 0.0079).toFixed(2);
+
+  const prioConfig = {
+    NORMAL:    { color: "#93C5FD", border: "rgba(37,99,235,0.5)",   bg: "rgba(37,99,235,0.15)",  icon: "📢", desc: "Routine update",   btnBg: "linear-gradient(135deg,#2563EB,#7C3AED)", glow: "rgba(37,99,235,0.3)" },
+    URGENT:    { color: "#FCD34D", border: "rgba(245,158,11,0.5)",  bg: "rgba(245,158,11,0.12)", icon: "⚠️", desc: "Time-sensitive",   btnBg: "linear-gradient(135deg,#D97706,#B45309)", glow: "rgba(245,158,11,0.25)" },
+    EMERGENCY: { color: "#FCA5A5", border: "rgba(239,68,68,0.5)",   bg: "rgba(239,68,68,0.15)",  icon: "🚨", desc: "Safety critical",  btnBg: "linear-gradient(135deg,#EF4444,#991B1B)", glow: "rgba(239,68,68,0.45)" },
+  };
+  const pc = prioConfig[priority];
+
+  const sectionDotColors = ["#93C5FD","#6EE7B7","#FCD34D","#C4B5FD","#F9A8D4","#6EE7B7","#FCD34D","#93C5FD"];
+
+  const builtinTemplates = [
+    { label: "📭 Class Cancelled", msg: "Class cancelled today. Check your email for updates." },
+    { label: "🌧 Campus Closure",  msg: "Campus is closed today due to inclement weather. Stay safe." },
+    { label: "🚪 Room Change",     msg: "Room change: your class has moved. Check with your instructor." },
+    { label: "🚨 Emergency",       msg: "EMERGENCY: Follow all instructions from campus safety personnel immediately." },
+  ];
+  const allTemplates = [...builtinTemplates, ...templates.map(t => ({ label: `▤ ${t.name}`, msg: t.message }))];
+
+  const fieldLabel = {
+    fontFamily: "monospace", fontSize: 10, fontWeight: 700,
+    letterSpacing: "0.1em", textTransform: "uppercase",
+    color: g.muted, marginBottom: 8, display: "flex",
+    alignItems: "center", justifyContent: "space-between",
+  };
 
   return (
-    <PageShell title="Send Alert" subtitle="Broadcast Now">
-      <div style={{ maxWidth: 600 }}>
-        <GlassCard>
-          <CardHead title="Send Alert" right="Text message sent to all enrolled students" />
-          <div style={{ padding: 24 }}>
-            <div style={{ marginBottom: 18 }}>
-              <FieldLabel>Send To</FieldLabel>
-              <GlassSelect value={section} onChange={e => setSection(e.target.value)}>
-                {sections.map(s => <option key={s.code} value={s.code} style={{ background: "#1a1a2e" }}>{s.name}</option>)}
-              </GlassSelect>
+    <PageShell
+      title="Send Alert"
+      subtitle="Send Alert"
+      actions={
+        <>
+          <GlassBtn onClick={() => setPage("Schedule")}>◷ Schedule Instead</GlassBtn>
+          <GlassBtn onClick={() => setPage("Templates")}>▤ Templates</GlassBtn>
+        </>
+      }
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "1.15fr 0.85fr", gap: 16 }}>
+
+        {/* ── LEFT: COMPOSE ── */}
+        <div>
+          <GlassCard>
+            <CardHead title="Compose Alert" right="SMS · Max 160 characters" />
+            <div style={{ padding: 22 }}>
+
+              {/* Info notice */}
+              <div style={{ display: "flex", gap: 10, background: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.18)", borderRadius: 10, padding: "12px 14px", marginBottom: 22 }}>
+                <span style={{ fontSize: 15, flexShrink: 0 }}>⚡</span>
+                <p style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.6, margin: 0 }}>
+                  Messages are sent instantly via SMS. Students do <strong style={{ color: "#FCD34D" }}>not</strong> need an app — they receive a standard text message directly to their phone.
+                </p>
+              </div>
+
+              {/* Section picker */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={fieldLabel}>
+                  Send To
+                  <span style={{ color: g.dim, fontWeight: 400, fontSize: 9 }}>Select one section or broadcast to all</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7 }}>
+                  {sections.map((s, i) => {
+                    const isAll = s.code === "00000";
+                    const sel = section === s.code;
+                    return (
+                      <button
+                        key={s.code}
+                        onClick={() => setSection(s.code)}
+                        style={{
+                          gridColumn: isAll ? "1 / -1" : "auto",
+                          padding: "10px 12px", borderRadius: 9, cursor: "pointer",
+                          fontFamily: "inherit", textAlign: "center",
+                          border: sel ? `1px solid ${isAll ? "rgba(37,99,235,0.6)" : "rgba(37,99,235,0.45)"}` : "1px solid rgba(255,255,255,0.1)",
+                          background: sel ? (isAll ? "rgba(37,99,235,0.2)" : "rgba(37,99,235,0.13)") : "rgba(255,255,255,0.04)",
+                          color: sel ? "#93C5FD" : g.muted,
+                          transition: "all 0.12s",
+                        }}
+                        onMouseEnter={e => { if (!sel) { e.currentTarget.style.background = "rgba(255,255,255,0.08)"; e.currentTarget.style.color = "white"; }}}
+                        onMouseLeave={e => { if (!sel) { e.currentTarget.style.background = "rgba(255,255,255,0.04)"; e.currentTarget.style.color = g.muted; }}}
+                      >
+                        <div style={{ fontSize: 12, fontWeight: 700 }}>{isAll ? "🌐 " : ""}{s.name}</div>
+                        <div style={{ fontSize: 10, color: sel ? "rgba(147,197,253,0.6)" : g.dim, marginTop: 2 }}>
+                          {s.count != null ? `${s.count} student${s.count !== 1 ? "s" : ""}` : ""}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Priority */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={fieldLabel}>
+                  Priority Level
+                  <span style={{ color: g.dim, fontWeight: 400, fontSize: 9 }}>Affects message prefix sent to students</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                  {Object.entries(prioConfig).map(([val, cfg]) => {
+                    const sel = priority === val;
+                    return (
+                      <button
+                        key={val}
+                        onClick={() => setPriority(val)}
+                        style={{
+                          padding: "13px 8px", borderRadius: 10, cursor: "pointer",
+                          fontFamily: "inherit", textAlign: "center",
+                          border: sel ? `1px solid ${cfg.border}` : "1px solid rgba(255,255,255,0.1)",
+                          background: sel ? cfg.bg : "rgba(255,255,255,0.04)",
+                          color: sel ? cfg.color : g.muted,
+                          boxShadow: sel && val === "EMERGENCY" ? "0 0 24px rgba(239,68,68,0.2)" : "none",
+                          transition: "all 0.15s",
+                        }}
+                      >
+                        <span style={{ fontSize: 20, display: "block", marginBottom: 5 }}>{cfg.icon}</span>
+                        <span style={{ display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.04em" }}>{val}</span>
+                        <span style={{ display: "block", fontSize: 9, marginTop: 3, opacity: 0.55 }}>{cfg.desc}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Quick templates */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ ...fieldLabel, marginBottom: 8 }}>Quick Templates</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {allTemplates.map((t, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setMessage(t.msg)}
+                      style={{
+                        padding: "5px 11px", borderRadius: 6, cursor: "pointer",
+                        background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)",
+                        color: g.muted, fontSize: 11, fontWeight: 600, fontFamily: "inherit",
+                        transition: "all 0.12s",
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,255,255,0.09)"; e.currentTarget.style.color = "white"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.04)"; e.currentTarget.style.color = g.muted; }}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Message textarea */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={fieldLabel}>
+                  Message
+                  <span style={{ color: message.length > 140 ? "#FCA5A5" : g.dim, fontWeight: 400, fontSize: 9 }}>{message.length} / 160 characters</span>
+                </div>
+                <textarea
+                  value={message}
+                  onChange={e => setMessage(e.target.value)}
+                  placeholder="Type your alert message here..."
+                  rows={4}
+                  maxLength={160}
+                  style={{
+                    ...glassInput, resize: "vertical", minHeight: 110,
+                    fontSize: 14, lineHeight: 1.6,
+                    border: `1px solid ${message.length > 140 ? "rgba(239,68,68,0.4)" : "rgba(255,255,255,0.12)"}`,
+                  }}
+                />
+                {/* Char progress bar */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 7 }}>
+                  <div style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.08)", borderRadius: 99 }}>
+                    <div style={{
+                      height: 3, borderRadius: 99, transition: "width 0.2s, background 0.2s",
+                      width: `${charPct}%`,
+                      background: message.length > 140 ? "linear-gradient(90deg,#EF4444,#DC2626)" : "linear-gradient(90deg,#2563EB,#7C3AED)",
+                    }} />
+                  </div>
+                  <span style={{ fontFamily: "monospace", fontSize: 10, color: message.length > 140 ? "#FCA5A5" : g.muted }}>{message.length}/160</span>
+                </div>
+              </div>
+
+              {/* Send button */}
+              <button
+                onClick={handleSend}
+                disabled={sending || message.length > 160 || !message.trim()}
+                style={{
+                  width: "100%", padding: "14px", borderRadius: 11, border: "none",
+                  fontFamily: "inherit", fontSize: 15, fontWeight: 800, cursor: sending ? "not-allowed" : "pointer",
+                  color: "white", transition: "all 0.15s",
+                  background: sentSuccess ? "linear-gradient(135deg,#059669,#047857)" : pc.btnBg,
+                  boxShadow: `0 0 30px ${pc.glow}`,
+                  opacity: (sending || !message.trim()) && !sentSuccess ? 0.6 : 1,
+                }}
+              >
+                {sentSuccess
+                  ? "✓ Alert Sent Successfully!"
+                  : sending
+                  ? "Sending..."
+                  : priority === "EMERGENCY"
+                  ? `🚨 Send Emergency Broadcast`
+                  : priority === "URGENT"
+                  ? `⚠️ Send Urgent Alert`
+                  : `⚡ Broadcast to ${selectedSection?.name || "All Students"}`
+                }
+              </button>
+
             </div>
-            <div style={{ marginBottom: 18 }}>
-              <FieldLabel>Priority</FieldLabel>
-              <div style={{ display: "flex", gap: 8 }}>
-                {prioBtns.map(p => (
-                  <button key={p.val} onClick={() => setPriority(p.val)} style={{
-                    flex: 1, padding: "9px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "inherit",
-                    border: `1px solid ${priority === p.val ? prioColors[p.val] + "80" : "rgba(255,255,255,0.1)"}`,
-                    background: priority === p.val ? prioColors[p.val] + "20" : "rgba(255,255,255,0.04)",
-                    color: priority === p.val ? prioColors[p.val] : g.muted,
-                  }}>{p.label}</button>
-                ))}
+          </GlassCard>
+        </div>
+
+        {/* ── RIGHT: PREVIEW + RECIPIENTS + RECENT ── */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+          {/* SMS Preview */}
+          <GlassCard>
+            <CardHead title="📱 SMS Preview" right="Live preview" />
+            <div style={{ margin: "14px 18px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: 16 }}>
+              <div style={{ fontFamily: "monospace", fontSize: 9, color: g.muted, letterSpacing: "0.08em", marginBottom: 8 }}>
+                FROM: +1 (866) 384-7549 · PAWS Alert
+              </div>
+              <div style={{ background: "rgba(37,99,235,0.18)", border: "1px solid rgba(37,99,235,0.25)", borderRadius: "12px 12px 12px 3px", padding: "12px 14px", maxWidth: "92%" }}>
+                <div style={{ fontSize: 13, color: message ? "white" : g.dim, fontStyle: message ? "normal" : "italic", lineHeight: 1.55, wordBreak: "break-word" }}>
+                  {message
+                    ? <><span style={{ color: pc.color, fontWeight: 700 }}>{prefix}</span>{message}</>
+                    : "Your message will appear here as students receive it..."
+                  }
+                </div>
+              </div>
+              <div style={{ fontFamily: "monospace", fontSize: 9, color: g.muted, marginTop: 8 }}>
+                {message
+                  ? `${prefix.length + message.length} chars · ${segments} segment${segments > 1 ? "s" : ""} · Est. $${estCost}`
+                  : "0 characters · 0 segments · Est. cost $0.00"
+                }
               </div>
             </div>
-            <div style={{ marginBottom: 20 }}>
-              <FieldLabel>Message <span style={{ float: "right", color: message.length > 140 ? "#FCA5A5" : g.muted }}>{message.length}/160</span></FieldLabel>
-              <GlassTextarea value={message} onChange={e => setMessage(e.target.value)} placeholder="Type your alert message..." rows={4} />
+          </GlassCard>
+
+          {/* Recipients */}
+          <GlassCard>
+            <CardHead title="Recipients" right={section === "00000" ? `All ${sections.filter(s => s.code !== "00000").length} sections` : "1 section"} />
+            <div style={{ padding: "4px 0 0" }}>
+              {sections.filter(s => s.code !== "00000").map((s, i) => {
+                const isSelected = section === "00000" || section === s.code;
+                return (
+                  <div key={s.code} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 18px", borderBottom: "1px solid rgba(255,255,255,0.05)", opacity: isSelected ? 1 : 0.3, transition: "opacity 0.2s" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: sectionDotColors[i % sectionDotColors.length], display: "inline-block", flexShrink: 0 }} />
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "white" }}>{s.code}</div>
+                        <div style={{ fontSize: 10, color: g.muted }}>{s.name?.replace(`${s.code} — `, "") || ""}</div>
+                      </div>
+                    </div>
+                    <span style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700, color: "#93C5FD", background: "rgba(37,99,235,0.15)", border: "1px solid rgba(37,99,235,0.2)", padding: "2px 9px", borderRadius: 5 }}>
+                      {s.count ?? "—"}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
-            <button onClick={handleSend} disabled={sending || message.length > 160} style={{
-              width: "100%", background: priority === "EMERGENCY" ? "linear-gradient(135deg, #DC2626, #991B1B)" : "linear-gradient(135deg, #2563EB, #7C3AED)",
-              border: "none", color: "white", borderRadius: 10, padding: 13, fontSize: 14, fontWeight: 700,
-              cursor: sending ? "not-allowed" : "pointer", opacity: sending ? 0.7 : 1, fontFamily: "inherit",
-              boxShadow: "0 0 24px rgba(37,99,235,0.3)",
-            }}>{sending ? "Sending..." : priority === "EMERGENCY" ? "🚨 Send Emergency Broadcast" : "⚡ Send Alert"}</button>
-          </div>
-        </GlassCard>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 18px", background: "rgba(37,99,235,0.08)", borderTop: "1px solid rgba(37,99,235,0.15)" }}>
+              <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: g.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Total Recipients</span>
+              <span style={{ fontSize: 22, fontWeight: 900, color: "#93C5FD", letterSpacing: "-0.03em" }}>{recipientCount.toLocaleString()}</span>
+            </div>
+          </GlassCard>
+
+          {/* Recent Sends */}
+          <GlassCard>
+            <CardHead title="Recent Sends" right={<span onClick={() => setPage("Dashboard")} style={{ color: "#93C5FD", cursor: "pointer", fontSize: 11 }}>View all →</span>} />
+            {recentLogs.length === 0 ? (
+              <div style={{ padding: "24px 18px", textAlign: "center", color: g.muted, fontSize: 13 }}>No recent alerts</div>
+            ) : recentLogs.map(log => {
+              const iconBg = log.priority_level === "EMERGENCY" ? "rgba(239,68,68,0.15)" : log.priority_level === "URGENT" ? "rgba(245,158,11,0.15)" : "rgba(37,99,235,0.15)";
+              const icon = log.priority_level === "EMERGENCY" ? "🚨" : log.priority_level === "URGENT" ? "⚠️" : "📢";
+              return (
+                <div key={log.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 18px", borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+                  <div style={{ width: 28, height: 28, borderRadius: 7, background: iconBg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, flexShrink: 0 }}>{icon}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, color: "white", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      [{log.priority_level}] {log.section_code} — {log.message_content}
+                    </div>
+                    <div style={{ fontFamily: "monospace", fontSize: 9, color: g.muted, marginTop: 2 }}>
+                      {timeAgo(log.timestamp)} · {log.recipient_count} recipients · <Badge label={log.status} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </GlassCard>
+
+        </div>
       </div>
     </PageShell>
   );
@@ -1272,7 +1539,7 @@ export default function App() {
 
   const pages = {
     Dashboard: <Dashboard setPage={setPage} />,
-    "Send Alert": <SendAlert toast={showToast} />,
+    "Send Alert": <SendAlert toast={showToast} setPage={setPage} />,
     Schedule: <SchedulePage toast={showToast} />,
     Templates: <TemplatesPage toast={showToast} />,
     Staff: <StaffManager toast={showToast} />,
