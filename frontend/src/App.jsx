@@ -248,10 +248,19 @@ function FieldLabel({ children }) {
 function Dashboard({ setPage }) {
   const [logs, setLogs] = useState([]);
   const [stats, setStats] = useState({});
+  const [scheduled, setScheduled] = useState([]);
+  const [sections, setSections] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedAlert, setSelectedAlert] = useState(null);
   const [receipts, setReceipts] = useState(null);
   const [receiptsLoading, setReceiptsLoading] = useState(false);
+
+  // Quick Send state
+  const [qSection, setQSection] = useState("00000");
+  const [qPriority, setQPriority] = useState("NORMAL");
+  const [qMessage, setQMessage] = useState("");
+  const [qSending, setQSending] = useState(false);
+  const [qResult, setQResult] = useState(null);
 
   const fetchReceipts = async (alertId) => {
     setSelectedAlert(alertId);
@@ -264,83 +273,227 @@ function Dashboard({ setPage }) {
 
   const fetchData = useCallback(async () => {
     try {
-      const [l, s] = await Promise.all([fetch(`${API}/logs/`), fetch(`${API}/logs/stats`)]);
+      const [l, s, sc, sec] = await Promise.all([
+        fetch(`${API}/logs/`),
+        fetch(`${API}/logs/stats`),
+        fetch(`${API}/scheduled/`),
+        fetch(`${API}/alerts/sections-list`),
+      ]);
       setLogs(await l.json());
       setStats(await s.json());
+      setScheduled(await sc.json());
+      setSections(await sec.json());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { fetchData(); const i = setInterval(fetchData, 15000); return () => clearInterval(i); }, [fetchData]);
 
-  const statCards = [
-    { label: "Total Alerts", value: stats.total_alerts ?? "—", icon: "📡", chip: "+34%", chipColor: "#93C5FD" },
-    { label: "SMS Delivered", value: stats.total_sms_sent ?? "—", icon: "📱", chip: "98.2%", chipColor: "#6EE7B7" },
-    { label: "Successful", value: stats.successful_alerts ?? "—", icon: "✅", chip: "Success", chipColor: "#6EE7B7" },
-    { label: "Partial Sent", value: stats.partial_alerts ?? "—", icon: "⚠️", chip: "Review", chipColor: "#FCD34D" },
-  ];
+  const handleQuickSend = async () => {
+    if (!qMessage.trim()) { setQResult({ error: "Message cannot be empty" }); return; }
+    if (qMessage.length > 160) { setQResult({ error: "Message exceeds 160 characters" }); return; }
+    setQSending(true); setQResult(null);
+    try {
+      const res = await fetch(`${API}/alerts/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ section_code: qSection, priority_level: qPriority, message: qMessage }) });
+      const data = await res.json();
+      if (!res.ok) setQResult({ error: data.detail || "Failed to send" });
+      else { setQResult({ success: `✓ Sent to ${data.recipient_count} recipients` }); setQMessage(""); fetchData(); }
+    } catch { setQResult({ error: "Could not reach backend" }); }
+    finally { setQSending(false); }
+  };
+
+  const handleCancelScheduled = async (id) => {
+    await fetch(`${API}/scheduled/${id}`, { method: "DELETE" });
+    fetchData();
+  };
+
+  const prioColors = { NORMAL: "#93C5FD", URGENT: "#FCD34D", EMERGENCY: "#FCA5A5" };
+  const pendingScheduled = scheduled.filter(a => a.status === "PENDING");
+
+  // Delivery stats calculation
+  const totalSms = stats.total_sms_sent ?? 0;
+  const successRate = stats.successful_alerts && stats.total_alerts ? Math.round((stats.successful_alerts / stats.total_alerts) * 100) : 0;
+  const failedCount = stats.partial_alerts ?? 0;
+
+  const thCell = { fontFamily: "monospace", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: g.dim, padding: "10px 18px", textAlign: "left" };
+  const tdBase = { padding: "11px 18px" };
 
   return (
     <PageShell title="Dashboard" subtitle="Command Center" actions={<>
       <GlassBtn onClick={fetchData}>↻ Refresh</GlassBtn>
+      <a href={`${API}/logs/export/alerts`} style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.7)", padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700, textDecoration: "none" }}>⬇ Export</a>
       <GlassBtn primary onClick={() => setPage("Send Alert")}>⚡ Send Alert</GlassBtn>
     </>}>
 
-      {/* Stat Cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 20 }}>
-        {statCards.map(s => (
-          <div key={s.label} style={{ ...glassCard, padding: 20, transition: "all 0.2s" }}>
+      {/* ── Row 1: Stat Cards ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 16 }}>
+        {[
+          { icon: "📡", label: "Total Alerts", value: stats.total_alerts ?? "—", chip: "+34% ↑", chipColor: "#93C5FD" },
+          { icon: "📱", label: "SMS Delivered", value: stats.total_sms_sent ?? "—", chip: "98.2% ↑", chipColor: "#6EE7B7" },
+          { icon: "🎓", label: "Successful", value: stats.successful_alerts ?? "—", chip: "+24 today", chipColor: "#6EE7B7" },
+          { icon: "📚", label: "Sections", value: stats.partial_alerts ?? "—", chip: "active", chipColor: "#FCD34D" },
+        ].map(s => (
+          <div key={s.label} style={{ ...glassCard, padding: 20 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
               <span style={{ fontSize: 20 }}>{s.icon}</span>
               <span style={{ fontFamily: "monospace", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 4, background: "rgba(255,255,255,0.08)", color: s.chipColor }}>{s.chip}</span>
             </div>
-            <div style={{ fontSize: 32, fontWeight: 900, color: "white", letterSpacing: "-0.05em", lineHeight: 1 }}>{loading ? "—" : s.value}</div>
+            <div style={{ fontSize: 34, fontWeight: 900, color: "white", letterSpacing: "-0.05em", lineHeight: 1 }}>{loading ? "—" : s.value}</div>
             <div style={{ fontSize: 12, color: g.muted, marginTop: 4 }}>{s.label}</div>
           </div>
         ))}
       </div>
 
-      {/* Alert Log */}
-      <GlassCard style={{ marginBottom: 16 }}>
-        <CardHead title="Recent Alerts" right="Click any row for delivery receipts" />
-        {loading ? (
-          <div style={{ padding: 40, textAlign: "center", color: g.muted }}>Loading...</div>
-        ) : logs.length === 0 ? (
-          <div style={{ padding: 48, textAlign: "center", color: g.muted }}>
-            <div style={{ fontSize: 32, marginBottom: 8 }}>📡</div>
-            <div style={{ fontWeight: 600 }}>No alerts sent yet</div>
-          </div>
-        ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                {["Time", "Section", "Priority", "Message", "Recipients", "Status"].map(h => (
-                  <th key={h} style={{ fontFamily: "monospace", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: g.dim, padding: "10px 18px", textAlign: "left" }}>{h}</th>
+      {/* ── Row 2: Recent Alerts + Quick Send ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr", gap: 14, marginBottom: 14 }}>
+
+        {/* Recent Alerts */}
+        <GlassCard>
+          <CardHead title="Recent Alerts" right="Click row for delivery receipts" />
+          {loading ? (
+            <div style={{ padding: 40, textAlign: "center", color: g.muted }}>Loading...</div>
+          ) : logs.length === 0 ? (
+            <div style={{ padding: 48, textAlign: "center", color: g.muted }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>📡</div>
+              <div style={{ fontWeight: 600 }}>No alerts sent yet</div>
+            </div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead><tr>{["Time", "Section", "Priority", "Message", "Sent", "Status"].map(h => <th key={h} style={thCell}>{h}</th>)}</tr></thead>
+              <tbody>
+                {logs.slice(0, 6).map(log => (
+                  <tr key={log.id} onClick={() => fetchReceipts(log.id)}
+                    style={{ borderTop: "1px solid rgba(255,255,255,0.05)", cursor: "pointer" }}
+                    onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.03)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                  >
+                    <td style={{ ...tdBase, fontSize: 11, color: g.muted, fontFamily: "monospace", whiteSpace: "nowrap" }}>{timeAgo(log.timestamp)}</td>
+                    <td style={{ ...tdBase, fontSize: 13, fontWeight: 700, color: "white" }}>{log.section_code}</td>
+                    <td style={tdBase}><Badge label={log.priority_level} /></td>
+                    <td style={{ ...tdBase, fontSize: 12, color: g.muted, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{log.message_content}</td>
+                    <td style={{ ...tdBase, fontSize: 13, fontWeight: 700, color: "#93C5FD" }}>{log.recipient_count}</td>
+                    <td style={tdBase}><Badge label={log.status} /></td>
+                  </tr>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {logs.map((log) => (
-                <tr key={log.id} onClick={() => fetchReceipts(log.id)} style={{ borderTop: "1px solid rgba(255,255,255,0.05)", cursor: "pointer", transition: "background 0.1s" }}
-                  onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.03)"}
-                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                >
-                  <td style={{ padding: "11px 18px", fontSize: 12, color: g.muted, fontFamily: "monospace", whiteSpace: "nowrap" }}>{timeAgo(log.timestamp)}</td>
-                  <td style={{ padding: "11px 18px", fontSize: 13, fontWeight: 700, color: "white" }}>{log.section_code}</td>
-                  <td style={{ padding: "11px 18px" }}><Badge label={log.priority_level} /></td>
-                  <td style={{ padding: "11px 18px", fontSize: 13, color: g.muted, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{log.message_content}</td>
-                  <td style={{ padding: "11px 18px", fontSize: 13, fontWeight: 700, color: "#93C5FD" }}>{log.recipient_count}</td>
-                  <td style={{ padding: "11px 18px" }}><Badge label={log.status} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </GlassCard>
+              </tbody>
+            </table>
+          )}
+        </GlassCard>
+
+        {/* Quick Send */}
+        <GlassCard>
+          <CardHead title="Quick Send" />
+          <div style={{ padding: 18 }}>
+            <div style={{ marginBottom: 13 }}>
+              <FieldLabel>Send To</FieldLabel>
+              <GlassSelect value={qSection} onChange={e => setQSection(e.target.value)}>
+                {sections.map(s => <option key={s.code} value={s.code} style={{ background: "#1a1a2e" }}>{s.name}</option>)}
+              </GlassSelect>
+            </div>
+            <div style={{ marginBottom: 13 }}>
+              <FieldLabel>Priority</FieldLabel>
+              <div style={{ display: "flex", gap: 6 }}>
+                {["NORMAL", "URGENT", "EMERGENCY"].map(p => (
+                  <button key={p} onClick={() => setQPriority(p)} style={{
+                    flex: 1, padding: "8px 4px", borderRadius: 7, cursor: "pointer",
+                    fontSize: 10, fontWeight: 700, fontFamily: "inherit",
+                    border: `1px solid ${qPriority === p ? prioColors[p] + "80" : "rgba(255,255,255,0.1)"}`,
+                    background: qPriority === p ? prioColors[p] + "20" : "rgba(255,255,255,0.04)",
+                    color: qPriority === p ? prioColors[p] : g.muted,
+                  }}>{p === "EMERGENCY" ? "🚨 SOS" : p}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <FieldLabel>Message <span style={{ float: "right", color: qMessage.length > 140 ? "#FCA5A5" : g.muted }}>{qMessage.length}/160</span></FieldLabel>
+              <textarea value={qMessage} onChange={e => setQMessage(e.target.value)} placeholder="Type your message..." rows={3} style={{ ...glassInput, resize: "vertical" }} />
+            </div>
+            {qResult?.error && <div style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 7, padding: "8px 12px", fontSize: 12, color: "#FCA5A5", marginBottom: 10 }}>⚠ {qResult.error}</div>}
+            {qResult?.success && <div style={{ background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 7, padding: "8px 12px", fontSize: 12, color: "#6EE7B7", marginBottom: 10 }}>{qResult.success}</div>}
+            <button onClick={handleQuickSend} disabled={qSending} style={{
+              width: "100%", background: qPriority === "EMERGENCY" ? "linear-gradient(135deg,#DC2626,#991B1B)" : "linear-gradient(135deg,#2563EB,#7C3AED)",
+              border: "none", color: "white", borderRadius: 9, padding: 11, fontSize: 13,
+              fontWeight: 700, cursor: qSending ? "not-allowed" : "pointer", fontFamily: "inherit",
+              boxShadow: "0 0 20px rgba(37,99,235,0.25)", opacity: qSending ? 0.7 : 1
+            }}>{qSending ? "Sending..." : "⚡ Broadcast Now"}</button>
+          </div>
+        </GlassCard>
+      </div>
+
+      {/* ── Row 3: Scheduled Alerts + Delivery Stats ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+
+        {/* Scheduled Alerts */}
+        <GlassCard>
+          <CardHead title="Scheduled Alerts" right={<span onClick={() => setPage("Schedule")} style={{ cursor: "pointer", color: "#93C5FD", fontSize: 12 }}>+ Schedule new</span>} />
+          {pendingScheduled.length === 0 ? (
+            <div style={{ padding: 32, textAlign: "center", color: g.muted, fontSize: 13 }}>
+              <div style={{ fontSize: 24, marginBottom: 6 }}>🕐</div>
+              No scheduled alerts — <span onClick={() => setPage("Schedule")} style={{ color: "#93C5FD", cursor: "pointer" }}>create one</span>
+            </div>
+          ) : pendingScheduled.slice(0, 3).map(a => {
+            const dt = new Date(a.scheduled_for);
+            const day = dt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+            const time = dt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+            return (
+              <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 18px", borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+                <div style={{ background: "rgba(37,99,235,0.15)", border: "1px solid rgba(37,99,235,0.25)", borderRadius: 8, padding: "6px 10px", textAlign: "center", minWidth: 52, flexShrink: 0 }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: "#93C5FD", textTransform: "uppercase", letterSpacing: "0.06em" }}>{day.split(" ")[0]}</div>
+                  <div style={{ fontFamily: "monospace", fontSize: 13, fontWeight: 700, color: "white" }}>{time}</div>
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "white", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 700, color: "#93C5FD" }}>{a.section_code}</span> — {a.message.length > 40 ? a.message.slice(0, 40) + "..." : a.message}
+                    <Badge label={a.priority_level} />
+                  </div>
+                  <div style={{ fontSize: 11, color: g.muted, marginTop: 2 }}>{day} · {a.recipient_count || "?"} recipients</div>
+                </div>
+                <button onClick={() => handleCancelScheduled(a.id)} style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.2)", color: "#FCA5A5", padding: "5px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontFamily: "inherit", fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>Cancel</button>
+              </div>
+            );
+          })}
+        </GlassCard>
+
+        {/* Delivery Stats */}
+        <GlassCard>
+          <CardHead title="Delivery Stats" />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, padding: "16px 18px" }}>
+            {[
+              { label: "Success Rate", value: `${successRate}%`, color: "#6EE7B7" },
+              { label: "Failed", value: failedCount, color: "#FCA5A5" },
+              { label: "This Week", value: stats.total_alerts ?? 0, color: "#93C5FD" },
+              { label: "Total SMS", value: totalSms, color: "#FCD34D" },
+            ].map(s => (
+              <div key={s.label} style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: "13px 14px" }}>
+                <div style={{ fontSize: 26, fontWeight: 900, color: s.color, letterSpacing: "-0.04em" }}>{s.value}</div>
+                <div style={{ fontSize: 11, color: g.muted, marginTop: 3 }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ padding: "0 18px 16px" }}>
+            {[
+              { label: "Delivered", value: stats.total_sms_sent ?? 0, total: Math.max(stats.total_sms_sent ?? 0, 1), color: g.green },
+              { label: "Failed", value: failedCount, total: Math.max(stats.total_sms_sent ?? 1, 1), color: g.red },
+              { label: "Pending", value: pendingScheduled.length, total: Math.max(pendingScheduled.length || 1, 1), color: g.gold },
+            ].map(r => {
+              const pct = Math.min(100, Math.round((r.value / r.total) * 100));
+              return (
+                <div key={r.label} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                  <span style={{ fontSize: 12, color: g.muted, width: 70 }}>{r.label}</span>
+                  <div style={{ flex: 1, height: 6, borderRadius: 99, background: "rgba(255,255,255,0.08)" }}>
+                    <div style={{ height: 6, borderRadius: 99, background: r.color, width: `${pct}%`, transition: "width 0.5s ease" }} />
+                  </div>
+                  <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: r.color, width: 40, textAlign: "right" }}>{r.value}</span>
+                </div>
+              );
+            })}
+          </div>
+        </GlassCard>
+      </div>
 
       {/* Receipt Modal */}
       {selectedAlert && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24, backdropFilter: "blur(8px)" }} onClick={() => setSelectedAlert(null)}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24, backdropFilter: "blur(8px)" }} onClick={() => setSelectedAlert(null)}>
           <div style={{ ...glassCard, width: "100%", maxWidth: 560, maxHeight: "80vh", overflow: "auto", padding: 24 }} onClick={e => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
               <h2 style={{ fontSize: 16, fontWeight: 800, color: "white", margin: 0 }}>Delivery Receipts</h2>
