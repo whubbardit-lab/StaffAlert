@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from database import get_db
+from security import require_auth
 from models import Staff, AuditLog
 from schemas import StaffCreate, StaffUpdate, StaffOut
 from security import hash_pin
@@ -16,12 +17,12 @@ def log_action(db: Session, action: str, entity_type: str, entity_id: int, detai
 
 
 @router.get("/", response_model=List[StaffOut])
-def get_all_staff(db: Session = Depends(get_db)):
+def get_all_staff(db: Session = Depends(get_db), auth=Depends(require_auth)):
     return db.query(Staff).all()
 
 
 @router.get("/{staff_id}", response_model=StaffOut)
-def get_staff(staff_id: int, db: Session = Depends(get_db)):
+def get_staff(staff_id: int, db: Session = Depends(get_db), auth=Depends(require_auth)):
     staff = db.query(Staff).filter(Staff.id == staff_id).first()
     if not staff:
         raise HTTPException(status_code=404, detail="Staff member not found")
@@ -29,7 +30,7 @@ def get_staff(staff_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/", response_model=StaffOut, status_code=201)
-def create_staff(staff: StaffCreate, request: Request, db: Session = Depends(get_db)):
+def create_staff(staff: StaffCreate, request: Request, db: Session = Depends(get_db), auth=Depends(require_auth)):
     existing = db.query(Staff).filter(
         (Staff.system_id == staff.system_id) | (Staff.phone_number == staff.phone_number)
     ).first()
@@ -50,7 +51,7 @@ def create_staff(staff: StaffCreate, request: Request, db: Session = Depends(get
 
 
 @router.patch("/{staff_id}", response_model=StaffOut)
-def update_staff(staff_id: int, update: StaffUpdate, request: Request, db: Session = Depends(get_db)):
+def update_staff(staff_id: int, update: StaffUpdate, request: Request, db: Session = Depends(get_db), auth=Depends(require_auth)):
     staff = db.query(Staff).filter(Staff.id == staff_id).first()
     if not staff:
         raise HTTPException(status_code=404, detail="Staff member not found")
@@ -71,7 +72,7 @@ def update_staff(staff_id: int, update: StaffUpdate, request: Request, db: Sessi
 
 
 @router.delete("/{staff_id}", status_code=204)
-def delete_staff(staff_id: int, request: Request, db: Session = Depends(get_db)):
+def delete_staff(staff_id: int, request: Request, db: Session = Depends(get_db), auth=Depends(require_auth)):
     staff = db.query(Staff).filter(Staff.id == staff_id).first()
     if not staff:
         raise HTTPException(status_code=404, detail="Staff member not found")
@@ -82,7 +83,7 @@ def delete_staff(staff_id: int, request: Request, db: Session = Depends(get_db))
 
 
 @router.patch("/{staff_id}/toggle", response_model=StaffOut)
-def toggle_staff_active(staff_id: int, request: Request, db: Session = Depends(get_db)):
+def toggle_staff_active(staff_id: int, request: Request, db: Session = Depends(get_db), auth=Depends(require_auth)):
     staff = db.query(Staff).filter(Staff.id == staff_id).first()
     if not staff:
         raise HTTPException(status_code=404, detail="Staff member not found")
