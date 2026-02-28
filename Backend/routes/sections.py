@@ -31,7 +31,7 @@ def sms_join_code_to_staff(section: Section, db: Session):
 
 
 # ── Sections CRUD ──────────────────────────────────────────────────────────
-@router.get("/sections", response_model=List[SectionOut])
+@router.get("/sections")
 def get_sections(db: Session = Depends(get_db)):
     sections = db.query(Section).all()
     result = []
