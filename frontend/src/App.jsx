@@ -1757,6 +1757,7 @@ export default function App() {
     Schedule: <SchedulePage toast={showToast} />,
     Templates: <TemplatesPage toast={showToast} />,
     Staff: <StaffManager toast={showToast} />,
+    Sections: <SectionsPage toast={showToast} />,
     Students: <StudentsPage toast={showToast} />,
     Import: <CSVImport toast={showToast} />,
     Statistics: <StatisticsPage />,
