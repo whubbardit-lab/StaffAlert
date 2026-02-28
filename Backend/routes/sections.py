@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from database import get_db
+from security import require_auth
 from models import Section, Subscription, Staff
 from schemas import SectionCreate, SectionOut, SubscriptionCreate, SubscriptionOut
 from sms import send_single_sms
@@ -32,7 +33,7 @@ def sms_join_code_to_staff(section: Section, db: Session):
 
 # ── Sections CRUD ──────────────────────────────────────────────────────────
 @router.get("/sections")
-def get_sections(db: Session = Depends(get_db)):
+def get_sections(db: Session = Depends(get_db), auth=Depends(require_auth)):
     sections = db.query(Section).all()
     result = []
     for s in sections:
@@ -52,7 +53,7 @@ def get_sections(db: Session = Depends(get_db)):
 
 
 @router.post("/sections", status_code=201)
-def create_section(section: SectionCreate, db: Session = Depends(get_db)):
+def create_section(section: SectionCreate, db: Session = Depends(get_db), auth=Depends(require_auth)):
     existing = db.query(Section).filter(Section.section_code == section.section_code).first()
     if existing:
         raise HTTPException(status_code=400, detail="Section code already exists")
@@ -80,7 +81,7 @@ def create_section(section: SectionCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/sections/{section_id}/regenerate-code", status_code=200)
-def regenerate_join_code(section_id: int, db: Session = Depends(get_db)):
+def regenerate_join_code(section_id: int, db: Session = Depends(get_db), auth=Depends(require_auth)):
     section = db.query(Section).filter(Section.id == section_id).first()
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
@@ -93,7 +94,7 @@ def regenerate_join_code(section_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/sections/{section_id}", status_code=204)
-def delete_section(section_id: int, db: Session = Depends(get_db)):
+def delete_section(section_id: int, db: Session = Depends(get_db), auth=Depends(require_auth)):
     section = db.query(Section).filter(Section.id == section_id).first()
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
@@ -103,7 +104,7 @@ def delete_section(section_id: int, db: Session = Depends(get_db)):
 
 # ── Students List ──────────────────────────────────────────────────────────
 @router.get("/students")
-def get_all_students(active_only: bool = True, db: Session = Depends(get_db)):
+def get_all_students(active_only: bool = True, db: Session = Depends(get_db), auth=Depends(require_auth)):
     now = datetime.utcnow()
     expired = db.query(Subscription).filter(
         Subscription.graduation_date != None,
@@ -134,7 +135,7 @@ def get_all_students(active_only: bool = True, db: Session = Depends(get_db)):
 
 
 @router.post("/students/manual", status_code=201)
-def add_student_manually(data: dict, db: Session = Depends(get_db)):
+def add_student_manually(data: dict, db: Session = Depends(get_db), auth=Depends(require_auth)):
     phone = data.get("phone", "").strip()
     section_code = data.get("section_code", "").strip().upper()
     name = data.get("name", "").strip() or None
@@ -160,7 +161,7 @@ def add_student_manually(data: dict, db: Session = Depends(get_db)):
 
 
 @router.delete("/students/{student_id}", status_code=204)
-def remove_student(student_id: int, db: Session = Depends(get_db)):
+def remove_student(student_id: int, db: Session = Depends(get_db), auth=Depends(require_auth)):
     sub = db.query(Subscription).filter(Subscription.id == student_id).first()
     if not sub:
         raise HTTPException(status_code=404, detail="Student not found")
@@ -169,7 +170,7 @@ def remove_student(student_id: int, db: Session = Depends(get_db)):
 
 
 @router.patch("/students/{student_id}/deactivate", status_code=200)
-def deactivate_student(student_id: int, db: Session = Depends(get_db)):
+def deactivate_student(student_id: int, db: Session = Depends(get_db), auth=Depends(require_auth)):
     sub = db.query(Subscription).filter(Subscription.id == student_id).first()
     if not sub:
         raise HTTPException(status_code=404, detail="Student not found")
@@ -180,7 +181,7 @@ def deactivate_student(student_id: int, db: Session = Depends(get_db)):
 
 # ── CSV Import — Students ──────────────────────────────────────────────────
 @router.post("/import/csv")
-async def import_students_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def import_students_csv(file: UploadFile = File(...), db: Session = Depends(get_db), auth=Depends(require_auth)):
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="File must be a .csv")
     content = await file.read()
@@ -221,7 +222,7 @@ async def import_students_csv(file: UploadFile = File(...), db: Session = Depend
 
 # ── CSV Import — Staff ─────────────────────────────────────────────────────
 @router.post("/import/staff-csv")
-async def import_staff_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def import_staff_csv(file: UploadFile = File(...), db: Session = Depends(get_db), auth=Depends(require_auth)):
     from security import hash_pin
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="File must be a .csv")
@@ -254,5 +255,5 @@ async def import_staff_csv(file: UploadFile = File(...), db: Session = Depends(g
 
 # ── Subscriptions ──────────────────────────────────────────────────────────
 @router.get("/subscriptions", response_model=List[SubscriptionOut])
-def get_subscriptions(db: Session = Depends(get_db)):
+def get_subscriptions(db: Session = Depends(get_db), auth=Depends(require_auth)):
     return db.query(Subscription).all()
