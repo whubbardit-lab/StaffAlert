@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from database import get_db, SessionLocal
+from database import get_db
+from security import require_auth, SessionLocal
 from models import ScheduledAlert, Section, Subscription, AlertLog
 from sms import broadcast_sms
 from pydantic import BaseModel, field_validator
@@ -84,7 +85,7 @@ async def fire_scheduled_alert(alert_id: int):
         db.close()
 
 
-def check_and_fire_due_alerts():
+def check_and_fire_due_alerts(auth=Depends(require_auth)):
     db = SessionLocal()
     try:
         now = datetime.utcnow()
@@ -102,7 +103,7 @@ def check_and_fire_due_alerts():
 
 
 @router.get("/")
-def get_scheduled_alerts(db: Session = Depends(get_db)):
+def get_scheduled_alerts(db: Session = Depends(get_db), auth=Depends(require_auth)):
     alerts = db.query(ScheduledAlert).order_by(ScheduledAlert.scheduled_for.asc()).all()
     return [
         {
@@ -121,7 +122,7 @@ def get_scheduled_alerts(db: Session = Depends(get_db)):
 
 
 @router.post("/", status_code=201)
-def create_scheduled_alert(alert: ScheduledAlertCreate, db: Session = Depends(get_db)):
+def create_scheduled_alert(alert: ScheduledAlertCreate, db: Session = Depends(get_db), auth=Depends(require_auth)):
     v = alert.scheduled_for
     if v.endswith("Z"):
         dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
@@ -151,7 +152,7 @@ def create_scheduled_alert(alert: ScheduledAlertCreate, db: Session = Depends(ge
 
 
 @router.delete("/{alert_id}", status_code=204)
-def cancel_scheduled_alert(alert_id: int, db: Session = Depends(get_db)):
+def cancel_scheduled_alert(alert_id: int, db: Session = Depends(get_db), auth=Depends(require_auth)):
     alert = db.query(ScheduledAlert).filter(ScheduledAlert.id == alert_id).first()
     if not alert: raise HTTPException(status_code=404, detail="Scheduled alert not found")
     if alert.status != "PENDING": raise HTTPException(status_code=400, detail="Only PENDING alerts can be cancelled")
