@@ -20,6 +20,7 @@ from routes.alerts import router as alerts_router
 from routes.auth import router as auth_router
 from routes.schedule import router as schedule_router
 from routes.schedule import check_and_fire_due_alerts
+from routes.receipts import router as receipts_router
 
 # ── Scheduler setup ────────────────────────────────────────────────────────
 scheduler = AsyncIOScheduler()
@@ -46,6 +47,7 @@ app.add_middleware(
         "http://localhost:5174",
         "http://localhost:3000",
         "https://staffalert-frontend.onrender.com",
+        "https://app.paws-alert.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -102,6 +104,7 @@ app.include_router(sections_router, prefix="/api")
 app.include_router(logs_router, prefix="/api")
 app.include_router(alerts_router, prefix="/api")
 app.include_router(schedule_router, prefix="/api")
+app.include_router(receipts_router, prefix="/api")
 
 @app.get("/")
 def root():
