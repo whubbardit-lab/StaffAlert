@@ -107,6 +107,7 @@ function Sidebar({ page, setPage, onLogout }) {
     ]},
     { label: "People", items: [
       { label: "Staff", page: "Staff", icon: "◈" },
+      { label: "Sections", page: "Sections", icon: "📚" },
       { label: "Students", page: "Students", icon: "◉" },
       { label: "Import", page: "Import", icon: "⬆" },
     ]},
@@ -328,10 +329,10 @@ function Dashboard({ setPage }) {
       {/* ── Row 1: Stat Cards ── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 16 }}>
         {[
-          { icon: "📡", label: "Total Alerts", value: stats.total_alerts ?? "—", chip: "+34% ↑", chipColor: "#93C5FD" },
-          { icon: "📱", label: "SMS Delivered", value: stats.total_sms_sent ?? "—", chip: "98.2% ↑", chipColor: "#6EE7B7" },
-          { icon: "🎓", label: "Successful", value: stats.successful_alerts ?? "—", chip: "+24 today", chipColor: "#6EE7B7" },
-          { icon: "📚", label: "Sections", value: stats.partial_alerts ?? "—", chip: "active", chipColor: "#FCD34D" },
+          { icon: "📡", label: "Total Alerts", value: stats.total_alerts ?? "—", chip: `${stats.total_alerts ?? 0} total`, chipColor: "#93C5FD" },
+          { icon: "📱", label: "SMS Delivered", value: stats.total_sms_sent ?? "—", chip: `${stats.total_sms_sent ?? 0} msgs`, chipColor: "#6EE7B7" },
+          { icon: "🎓", label: "Active Students", value: stats.active_students ?? "—", chip: "enrolled", chipColor: "#6EE7B7" },
+          { icon: "📚", label: "Sections", value: stats.total_sections ?? "—", chip: "active", chipColor: "#FCD34D" },
         ].map(s => (
           <div key={s.label} style={{ ...glassCard, padding: 20 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
@@ -941,6 +942,126 @@ function StaffManager({ toast }) {
 }
 
 // ── Students Page ──────────────────────────────────────────────────────────
+
+// ── Sections Manager ───────────────────────────────────────────────────────
+function SectionsPage({ toast }) {
+  const [sections, setSections] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState({ section_code: "", section_name: "" });
+  const [saving, setSaving] = useState(false);
+
+  const fetchSections = async () => {
+    try { setSections(await (await fetch(`${API}/sections`)).json()); }
+    catch {} finally { setLoading(false); }
+  };
+  useEffect(() => { fetchSections(); }, []);
+
+  const handleAdd = async () => {
+    if (!form.section_code || !form.section_name) { toast("Section code and name required", "error"); return; }
+    setSaving(true);
+    try {
+      const res = await fetch(`${API}/sections`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+      const data = await res.json();
+      if (res.ok) { toast(`Section ${data.section_code} created — join code ${data.join_code} sent to staff`, "success"); setForm({ section_code: "", section_name: "" }); fetchSections(); }
+      else toast(data.detail || "Failed to create section", "error");
+    } catch { toast("Could not reach backend", "error"); }
+    finally { setSaving(false); }
+  };
+
+  const handleDelete = async (id, code) => {
+    if (!confirm(`Delete section ${code}? This will also remove all student enrollments.`)) return;
+    await fetch(`${API}/sections/${id}`, { method: "DELETE" });
+    fetchSections();
+    toast(`Section ${code} deleted`, "success");
+  };
+
+  const handleRegenCode = async (id, code) => {
+    if (!confirm(`Regenerate join code for ${code}? The old code will stop working and staff will be texted the new one.`)) return;
+    try {
+      const res = await fetch(`${API}/sections/${id}/regenerate-code`, { method: "POST" });
+      const data = await res.json();
+      if (res.ok) { toast(`New code for ${code}: ${data.join_code} — sent to all staff`, "success"); fetchSections(); }
+      else toast("Failed to regenerate code", "error");
+    } catch { toast("Could not reach backend", "error"); }
+  };
+
+  const isExpired = (expiresStr) => expiresStr && new Date(expiresStr) < new Date();
+
+  return (
+    <PageShell title="Sections" subtitle="Manage Sections">
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.6fr", gap: 16 }}>
+
+        {/* Add Section */}
+        <div>
+          <GlassCard>
+            <CardHead title="Add New Section" />
+            <div style={{ padding: 20 }}>
+              <div style={{ marginBottom: 14 }}>
+                <FieldLabel>Section Code *</FieldLabel>
+                <GlassInput value={form.section_code} onChange={e => setForm(f => ({ ...f, section_code: e.target.value.toUpperCase() }))} placeholder="e.g. CS101" />
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <FieldLabel>Section Name *</FieldLabel>
+                <GlassInput value={form.section_name} onChange={e => setForm(f => ({ ...f, section_name: e.target.value }))} placeholder="e.g. Intro to Computer Science" />
+              </div>
+              <GlassBtn primary onClick={handleAdd}>{saving ? "Creating..." : "➕ Create Section"}</GlassBtn>
+              <div style={{ marginTop: 14, background: "rgba(37,99,235,0.07)", border: "1px solid rgba(37,99,235,0.18)", borderRadius: 10, padding: "12px 14px" }}>
+                <p style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", margin: 0, lineHeight: 1.6 }}>
+                  ⚡ When a section is created, a <strong style={{ color: "#93C5FD" }}>6-character join code</strong> is automatically generated and texted to all registered staff. Students join by texting <strong style={{ color: "#93C5FD" }}>JOIN [CODE] [JOINCODE]</strong>.
+                </p>
+              </div>
+            </div>
+          </GlassCard>
+        </div>
+
+        {/* Sections List */}
+        <GlassCard>
+          <CardHead title={`All Sections (${sections.length})`} right={`${sections.reduce((a,s) => a + (s.student_count || 0), 0)} total students`} />
+          {loading ? (
+            <div style={{ padding: 40, textAlign: "center", color: g.muted }}>Loading...</div>
+          ) : sections.length === 0 ? (
+            <div style={{ padding: 48, textAlign: "center", color: g.muted }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>📚</div>
+              <div style={{ fontWeight: 600 }}>No sections yet</div>
+              <div style={{ fontSize: 13, marginTop: 4 }}>Create your first section to get started</div>
+            </div>
+          ) : (
+            <div>
+              {sections.map(s => (
+                <div key={s.id} style={{ padding: "14px 18px", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <span style={{ fontSize: 14, fontWeight: 800, color: "white" }}>{s.section_code}</span>
+                      <span style={{ fontSize: 12, color: g.muted }}>{s.section_name}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 5, background: isExpired(s.join_code_expires) ? "rgba(239,68,68,0.15)" : "rgba(37,99,235,0.15)", color: isExpired(s.join_code_expires) ? "#FCA5A5" : "#93C5FD", border: `1px solid ${isExpired(s.join_code_expires) ? "rgba(239,68,68,0.25)" : "rgba(37,99,235,0.25)"}` }}>
+                        {isExpired(s.join_code_expires) ? "⚠ EXPIRED" : `🔑 ${s.join_code}`}
+                      </span>
+                      {s.join_code_expires && (
+                        <span style={{ fontSize: 10, color: g.dim, fontFamily: "monospace" }}>
+                          {isExpired(s.join_code_expires) ? "Code expired" : `exp. ${new Date(s.join_code_expires).toLocaleDateString()}`}
+                        </span>
+                      )}
+                      <span style={{ fontFamily: "monospace", fontSize: 10, color: "#6EE7B7", background: "rgba(16,185,129,0.1)", padding: "1px 7px", borderRadius: 4 }}>
+                        {s.student_count ?? 0} students
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                    <button onClick={() => handleRegenCode(s.id, s.section_code)} style={{ background: "rgba(37,99,235,0.12)", border: "1px solid rgba(37,99,235,0.25)", color: "#93C5FD", padding: "5px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontFamily: "inherit", fontWeight: 600 }}>🔄 New Code</button>
+                    <button onClick={() => handleDelete(s.id, s.section_code)} style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", color: "#FCA5A5", padding: "5px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontFamily: "inherit", fontWeight: 600 }}>Delete</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </GlassCard>
+      </div>
+    </PageShell>
+  );
+}
+
 function StudentsPage({ toast }) {
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -999,65 +1120,158 @@ function StudentsPage({ toast }) {
 
 // ── CSV Import ─────────────────────────────────────────────────────────────
 function CSVImport({ toast }) {
-  const [file, setFile] = useState(null);
-  const [uploading, setUploading] = useState(false);
-  const [result, setResult] = useState(null);
+  const [tab, setTab] = useState("manual"); // manual | students | staff
+  // Manual add
+  const [manualForm, setManualForm] = useState({ phone: "", section_code: "", name: "" });
+  const [manualSaving, setManualSaving] = useState(false);
+  // Student CSV
+  const [studentFile, setStudentFile] = useState(null);
+  const [studentUploading, setStudentUploading] = useState(false);
+  const [studentResult, setStudentResult] = useState(null);
+  // Staff CSV
+  const [staffFile, setStaffFile] = useState(null);
+  const [staffUploading, setStaffUploading] = useState(false);
+  const [staffResult, setStaffResult] = useState(null);
 
-  const handleUpload = async () => {
-    if (!file) { toast("Please select a CSV file", "error"); return; }
-    setUploading(true); setResult(null);
-    const form = new FormData(); form.append("file", file);
+  const handleManualAdd = async () => {
+    if (!manualForm.phone || !manualForm.section_code) { toast("Phone and section code required", "error"); return; }
+    setManualSaving(true);
+    try {
+      const res = await fetch(`${API}/students/manual`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(manualForm) });
+      const data = await res.json();
+      if (res.ok) { toast("Student added successfully", "success"); setManualForm({ phone: "", section_code: "", name: "" }); }
+      else toast(data.detail || "Failed to add student", "error");
+    } catch { toast("Could not reach backend", "error"); }
+    finally { setManualSaving(false); }
+  };
+
+  const handleStudentUpload = async () => {
+    if (!studentFile) { toast("Please select a CSV file", "error"); return; }
+    setStudentUploading(true); setStudentResult(null);
+    const form = new FormData(); form.append("file", studentFile);
     try {
       const res = await fetch(`${API}/import/csv`, { method: "POST", body: form });
       const data = await res.json();
-      if (res.ok) { setResult(data); toast("Import successful", "success"); }
+      if (res.ok) { setStudentResult(data); toast("Students imported", "success"); }
       else toast(data.detail || "Import failed", "error");
     } catch { toast("Could not reach backend", "error"); }
-    finally { setUploading(false); }
+    finally { setStudentUploading(false); }
   };
 
-  return (
-    <PageShell title="Import" subtitle="Import Students">
-      <div style={{ maxWidth: 600 }}>
-        <GlassCard style={{ marginBottom: 16 }}>
-          <CardHead title="Upload CSV" />
-          <div style={{ padding: 24 }}>
-            <div style={{ border: "2px dashed rgba(37,99,235,0.3)", borderRadius: 12, padding: 32, textAlign: "center", marginBottom: 20, background: "rgba(37,99,235,0.04)" }}>
-              <div style={{ fontSize: 32, marginBottom: 8 }}>📂</div>
-              <div style={{ fontSize: 14, color: g.muted, marginBottom: 12 }}>Select your student CSV file</div>
-              <input type="file" accept=".csv" onChange={e => setFile(e.target.files[0])} style={{ color: g.muted, fontSize: 13 }} />
-            </div>
-            {file && <div style={{ background: "rgba(37,99,235,0.1)", border: "1px solid rgba(37,99,235,0.2)", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: "#93C5FD" }}>📄 {file.name}</div>}
-            <GlassBtn primary onClick={handleUpload}>{uploading ? "Uploading..." : "⬆ Import Students"}</GlassBtn>
+  const handleStaffUpload = async () => {
+    if (!staffFile) { toast("Please select a CSV file", "error"); return; }
+    setStaffUploading(true); setStaffResult(null);
+    const form = new FormData(); form.append("file", staffFile);
+    try {
+      const res = await fetch(`${API}/import/staff-csv`, { method: "POST", body: form });
+      const data = await res.json();
+      if (res.ok) { setStaffResult(data); toast("Staff imported", "success"); }
+      else toast(data.detail || "Import failed", "error");
+    } catch { toast("Could not reach backend", "error"); }
+    finally { setStaffUploading(false); }
+  };
+
+  const tabStyle = (t) => ({
+    padding: "8px 18px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700,
+    fontFamily: "inherit", border: "1px solid",
+    background: tab === t ? "rgba(37,99,235,0.2)" : "rgba(255,255,255,0.04)",
+    borderColor: tab === t ? "rgba(37,99,235,0.5)" : "rgba(255,255,255,0.1)",
+    color: tab === t ? "#93C5FD" : g.muted,
+  });
+
+  const ResultCards = ({ result }) => result ? (
+    <div style={{ marginTop: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
+        {[{ label: "Imported", value: result.imported, color: "#6EE7B7" }, { label: "Skipped", value: result.skipped, color: "#FCD34D" }, { label: "Errors", value: result.errors?.length || 0, color: "#FCA5A5" }].map(s => (
+          <div key={s.label} style={{ background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: 14, textAlign: "center", border: "1px solid rgba(255,255,255,0.08)" }}>
+            <div style={{ fontSize: 24, fontWeight: 900, color: s.color }}>{s.value}</div>
+            <div style={{ fontSize: 11, color: g.muted }}>{s.label}</div>
           </div>
-        </GlassCard>
-        {result && (
+        ))}
+      </div>
+      {result.errors?.length > 0 && result.errors.map((e, i) => <div key={i} style={{ fontSize: 12, color: "#FCA5A5", marginBottom: 4 }}>⚠ {e}</div>)}
+    </div>
+  ) : null;
+
+  return (
+    <PageShell title="Import" subtitle="Add People">
+      <div style={{ maxWidth: 640 }}>
+        {/* Tab switcher */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          <button style={tabStyle("manual")} onClick={() => setTab("manual")}>✏️ Manual Add</button>
+          <button style={tabStyle("students")} onClick={() => setTab("students")}>🎓 Student CSV</button>
+          <button style={tabStyle("staff")} onClick={() => setTab("staff")}>👤 Staff CSV</button>
+        </div>
+
+        {/* Manual Add */}
+        {tab === "manual" && (
           <GlassCard>
-            <CardHead title="Import Results" />
-            <div style={{ padding: 20 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
-                {[{ label: "Imported", value: result.imported, color: "#6EE7B7" }, { label: "Skipped", value: result.skipped, color: "#FCD34D" }, { label: "Errors", value: result.errors?.length || 0, color: "#FCA5A5" }].map(s => (
-                  <div key={s.label} style={{ background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: 14, textAlign: "center", border: "1px solid rgba(255,255,255,0.08)" }}>
-                    <div style={{ fontSize: 24, fontWeight: 900, color: s.color }}>{s.value}</div>
-                    <div style={{ fontSize: 11, color: g.muted }}>{s.label}</div>
-                  </div>
-                ))}
+            <CardHead title="Add Student Manually" right="No CSV needed" />
+            <div style={{ padding: 22 }}>
+              <div style={{ marginBottom: 14 }}>
+                <FieldLabel>Phone Number *</FieldLabel>
+                <GlassInput value={manualForm.phone} onChange={e => setManualForm(f => ({ ...f, phone: e.target.value }))} placeholder="+18655551234 or 8655551234" />
               </div>
-              {result.errors?.length > 0 && result.errors.map((e, i) => <div key={i} style={{ fontSize: 12, color: "#FCA5A5", marginBottom: 4 }}>⚠ {e}</div>)}
+              <div style={{ marginBottom: 14 }}>
+                <FieldLabel>Section Code *</FieldLabel>
+                <GlassInput value={manualForm.section_code} onChange={e => setManualForm(f => ({ ...f, section_code: e.target.value.toUpperCase() }))} placeholder="e.g. CS101" />
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <FieldLabel>Student Name (optional)</FieldLabel>
+                <GlassInput value={manualForm.name} onChange={e => setManualForm(f => ({ ...f, name: e.target.value }))} placeholder="Jane Doe" />
+              </div>
+              <GlassBtn primary onClick={handleManualAdd}>{manualSaving ? "Adding..." : "➕ Add Student"}</GlassBtn>
+              <p style={{ fontSize: 12, color: g.dim, marginTop: 12, marginBottom: 0 }}>
+                💡 Students can also self-enroll by texting <strong style={{ color: "#93C5FD" }}>JOIN [CODE] [JOINCODE]</strong> to your number.
+              </p>
             </div>
           </GlassCard>
         )}
-        <GlassCard style={{ marginTop: 16 }}>
-          <CardHead title="CSV Format" />
-          <div style={{ padding: 20 }}>
-            <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 8, padding: 14, fontFamily: "monospace", fontSize: 12, color: "#93C5FD", marginBottom: 12 }}>
-              Phone,SectionCode,Name,GraduationDate<br />
-              +18655551234,CS101,,2026-12-31<br />
-              +18655555678,MATH201,Jane Doe,2027-05-15
+
+        {/* Student CSV */}
+        {tab === "students" && (
+          <GlassCard>
+            <CardHead title="Import Students via CSV" />
+            <div style={{ padding: 22 }}>
+              <div style={{ border: "2px dashed rgba(37,99,235,0.3)", borderRadius: 12, padding: 28, textAlign: "center", marginBottom: 16, background: "rgba(37,99,235,0.04)" }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>📂</div>
+                <div style={{ fontSize: 14, color: g.muted, marginBottom: 12 }}>Select your student CSV file</div>
+                <input type="file" accept=".csv" onChange={e => setStudentFile(e.target.files[0])} style={{ color: g.muted, fontSize: 13 }} />
+              </div>
+              {studentFile && <div style={{ background: "rgba(37,99,235,0.1)", border: "1px solid rgba(37,99,235,0.2)", borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: "#93C5FD" }}>📄 {studentFile.name}</div>}
+              <GlassBtn primary onClick={handleStudentUpload}>{studentUploading ? "Uploading..." : "⬆ Import Students"}</GlassBtn>
+              <ResultCards result={studentResult} />
+              <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: 14, fontFamily: "monospace", fontSize: 12, color: "#93C5FD", marginTop: 16 }}>
+                Phone,SectionCode,Name,GraduationDate<br />
+                +18655551234,CS101,,2026-12-31<br />
+                +18655555678,MATH201,Jane Doe,2027-05-15
+              </div>
             </div>
-            <p style={{ fontSize: 12, color: g.muted }}>Students can also self-enroll by texting <strong style={{ color: "#93C5FD" }}>JOIN CS101</strong> to your Twilio number.</p>
-          </div>
-        </GlassCard>
+          </GlassCard>
+        )}
+
+        {/* Staff CSV */}
+        {tab === "staff" && (
+          <GlassCard>
+            <CardHead title="Import Staff via CSV" />
+            <div style={{ padding: 22 }}>
+              <div style={{ border: "2px dashed rgba(124,58,237,0.3)", borderRadius: 12, padding: 28, textAlign: "center", marginBottom: 16, background: "rgba(124,58,237,0.04)" }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>👤</div>
+                <div style={{ fontSize: 14, color: g.muted, marginBottom: 12 }}>Select your staff CSV file</div>
+                <input type="file" accept=".csv" onChange={e => setStaffFile(e.target.files[0])} style={{ color: g.muted, fontSize: 13 }} />
+              </div>
+              {staffFile && <div style={{ background: "rgba(124,58,237,0.1)", border: "1px solid rgba(124,58,237,0.2)", borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: "#C4B5FD" }}>📄 {staffFile.name}</div>}
+              <GlassBtn primary onClick={handleStaffUpload}>{staffUploading ? "Uploading..." : "⬆ Import Staff"}</GlassBtn>
+              <ResultCards result={staffResult} />
+              <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: 14, fontFamily: "monospace", fontSize: 12, color: "#C4B5FD", marginTop: 16 }}>
+                Name,Phone,SystemID,PIN<br />
+                John Smith,+18655551234,jsmith01,1234<br />
+                Jane Doe,+18655555678,jdoe02,5678
+              </div>
+              <p style={{ fontSize: 12, color: g.dim, marginTop: 10, marginBottom: 0 }}>⚠ PINs are hashed immediately — they are never stored in plain text.</p>
+            </div>
+          </GlassCard>
+        )}
       </div>
     </PageShell>
   );
@@ -1164,7 +1378,7 @@ function SchedulePage({ toast }) {
     if (!form.scheduled_for) { toast("Please select date and time", "error"); return; }
     setSaving(true);
     try {
-      const res = await fetch(`${API}/scheduled/`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, scheduled_for: new Date(form.scheduled_for).toISOString().slice(0, 19) }) });
+      const res = await fetch(`${API}/scheduled/`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, scheduled_for: new Date(form.scheduled_for).toISOString() }) });
       const data = await res.json();
       if (!res.ok) toast(data.detail || "Failed to schedule", "error");
       else { toast(`Scheduled for ${data.scheduled_for}`, "success"); setForm({ message: "", section_code: "00000", priority_level: "NORMAL", scheduled_for: "" }); fetchScheduled(); }
@@ -1221,7 +1435,7 @@ function SchedulePage({ toast }) {
                       <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
                         <span style={{ fontWeight: 700, color: "#93C5FD" }}>{a.section_code}</span>
                         <Badge label={a.priority_level} />
-                        <span style={{ fontSize: 11, color: g.muted }}>🕐 {a.scheduled_for}</span>
+                        <span style={{ fontSize: 11, color: g.muted }}>🕐 {new Date(a.scheduled_for).toLocaleString()}</span>
                       </div>
                       <p style={{ fontSize: 13, color: g.muted, margin: 0 }}>{a.message}</p>
                     </div>
@@ -1239,7 +1453,7 @@ function SchedulePage({ toast }) {
                 <tbody>
                   {past.map(a => (
                     <tr key={a.id} style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}>
-                      <td style={{ padding: "10px 16px", fontSize: 12, color: g.muted }}>{a.scheduled_for}</td>
+                      <td style={{ padding: "10px 16px", fontSize: 12, color: g.muted }}>{new Date(a.scheduled_for).toLocaleString()}</td>
                       <td style={{ padding: "10px 16px", fontWeight: 700, color: "#93C5FD" }}>{a.section_code}</td>
                       <td style={{ padding: "10px 16px" }}><Badge label={a.status} /></td>
                       <td style={{ padding: "10px 16px", fontSize: 13, color: g.muted }}>{a.recipient_count || "—"}</td>
