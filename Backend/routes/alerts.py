@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Staff, Section, Subscription, AlertLog
+from security import require_auth
+from models import Staff, Section, Subscription, AlertLog, DeliveryReceipt
 from sms import broadcast_sms
 from pydantic import BaseModel, field_validator
 from typing import Optional, List
@@ -47,7 +48,7 @@ _next_template_id = 5
 
 # ── Send Alert ─────────────────────────────────────────────────────────────
 @router.post("/send")
-async def send_alert(alert: AlertSend, db: Session = Depends(get_db)):
+async def send_alert(alert: AlertSend, db: Session = Depends(get_db), auth=Depends(require_auth)):
     """Admin dashboard triggered alert — no phone/PIN required."""
 
     # Resolve recipients
@@ -93,6 +94,18 @@ async def send_alert(alert: AlertSend, db: Session = Depends(get_db)):
         status="SENT" if result["failed"] == 0 else "PARTIAL"
     )
     db.add(log)
+    db.flush()
+
+    # Save delivery receipts
+    for detail in result.get("details", []):
+        receipt = DeliveryReceipt(
+            alert_log_id=log.id,
+            phone_number=detail["to"],
+            status=detail["status"],
+            error_message=detail.get("error")
+        )
+        db.add(receipt)
+
     db.commit()
 
     return {
@@ -105,7 +118,7 @@ async def send_alert(alert: AlertSend, db: Session = Depends(get_db)):
 
 # ── Templates ──────────────────────────────────────────────────────────────
 @router.get("/templates")
-def get_templates():
+def get_templates(auth=Depends(require_auth)):
     return _templates
 
 
@@ -127,7 +140,7 @@ def delete_template(template_id: int):
 
 # ── Sections list for dropdown ─────────────────────────────────────────────
 @router.get("/sections-list")
-def get_sections_for_alerts(db: Session = Depends(get_db)):
+def get_sections_for_alerts(db: Session = Depends(get_db), auth=Depends(require_auth)):
     sections = db.query(Section).all()
     result = [{"code": "00000", "name": "🚨 ALL STUDENTS (Emergency Broadcast)"}]
     result += [{"code": s.section_code, "name": f"{s.section_code} — {s.section_name}"} for s in sections]
