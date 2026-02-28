@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from database import get_db
+from security import require_auth
 from models import AlertLog, Staff, Subscription, Section, DeliveryReceipt
 from schemas import AlertLogOut
 from typing import List
@@ -13,12 +14,12 @@ router = APIRouter(prefix="/logs", tags=["Logs"])
 
 
 @router.get("/", response_model=List[AlertLogOut])
-def get_logs(limit: int = Query(default=50, le=200), offset: int = 0, db: Session = Depends(get_db)):
+def get_logs(limit: int = Query(default=50, le=200), offset: int = 0, db: Session = Depends(get_db), auth=Depends(require_auth)):
     return db.query(AlertLog).order_by(AlertLog.timestamp.desc()).offset(offset).limit(limit).all()
 
 
 @router.get("/stats")
-def get_stats(db: Session = Depends(get_db)):
+def get_stats(db: Session = Depends(get_db), auth=Depends(require_auth)):
     total_alerts = db.query(AlertLog).count()
     total_sent = db.query(AlertLog).filter(AlertLog.status == "SENT").count()
     total_partial = db.query(AlertLog).filter(AlertLog.status == "PARTIAL").count()
@@ -37,7 +38,7 @@ def get_stats(db: Session = Depends(get_db)):
 
 
 @router.get("/export/alerts")
-def export_alerts_csv(db: Session = Depends(get_db)):
+def export_alerts_csv(db: Session = Depends(get_db), auth=Depends(require_auth)):
     logs = db.query(AlertLog).order_by(AlertLog.timestamp.desc()).all()
     output = io.StringIO()
     writer = csv.writer(output)
@@ -53,7 +54,7 @@ def export_alerts_csv(db: Session = Depends(get_db)):
 
 
 @router.get("/export/students")
-def export_students_csv(db: Session = Depends(get_db)):
+def export_students_csv(db: Session = Depends(get_db), auth=Depends(require_auth)):
     subs = db.query(Subscription).all()
     output = io.StringIO()
     writer = csv.writer(output)
@@ -70,7 +71,7 @@ def export_students_csv(db: Session = Depends(get_db)):
 
 
 @router.get("/stats/charts")
-def get_chart_data(db: Session = Depends(get_db)):
+def get_chart_data(db: Session = Depends(get_db), auth=Depends(require_auth)):
     logs = db.query(AlertLog).order_by(AlertLog.timestamp.asc()).all()
     today = datetime.utcnow().date()
     thirty_days_ago = today - timedelta(days=29)
