@@ -86,7 +86,7 @@ async def fire_scheduled_alert(alert_id: int):
         db.close()
 
 
-def check_and_fire_due_alerts(auth=Depends(require_auth)):
+def check_and_fire_due_alerts():
     db = SessionLocal()
     try:
         now = datetime.utcnow()
