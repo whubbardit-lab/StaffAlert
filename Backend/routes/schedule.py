@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from database import get_db
-from security import require_auth, SessionLocal
+from security import require_auth
+from database import SessionLocal
 from models import ScheduledAlert, Section, Subscription, AlertLog
 from sms import broadcast_sms
 from pydantic import BaseModel, field_validator
