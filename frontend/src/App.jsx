@@ -1744,11 +1744,49 @@ function LoginScreen({ onLogin }) {
 // ── Root App ───────────────────────────────────────────────────────────────
 export default function App() {
   const [page, setPage] = useState("Dashboard");
-  const [loggedIn, setLoggedIn] = useState(!!localStorage.getItem("paws_token"));
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const [waking, setWaking] = useState(false);
   const [toast, setToast] = useState(null);
 
-  const showToast = (message, type = "success") => setToast({ message, type });
+  // On mount — wait for backend to wake up, then validate token
+  useEffect(() => {
+    const token = localStorage.getItem("paws_token");
+    if (!token) { setChecking(false); return; }
 
+    const validateToken = async () => {
+      // Try up to 10 times with 2s gap — handles Render cold start (~15s)
+      for (let i = 0; i < 10; i++) {
+        try {
+          const res = await fetch(`${API}/auth/me`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (res.ok) {
+            setLoggedIn(true);
+            setChecking(false);
+            return;
+          }
+          if (res.status === 401) {
+            // Token invalid or expired — clear it and go to login
+            localStorage.removeItem("paws_token");
+            setChecking(false);
+            return;
+          }
+        } catch {
+          // Backend still waking up — show waking indicator after first fail
+          if (i === 0) setWaking(true);
+        }
+        await new Promise(r => setTimeout(r, 2000));
+      }
+      // Backend never responded — clear token and go to login
+      localStorage.removeItem("paws_token");
+      setChecking(false);
+    };
+
+    validateToken();
+  }, []);
+
+  const showToast = (message, type = "success") => setToast({ message, type });
   const handleLogout = () => { localStorage.removeItem("paws_token"); setLoggedIn(false); };
 
   const pages = {
@@ -1764,6 +1802,41 @@ export default function App() {
     "Audit Log": <AuditLogPage />,
   };
 
+  // ── Loading screen — backend waking up ──────────────────────────────────
+  if (checking) return (
+    <div style={{
+      minHeight: "100vh",
+      background: "linear-gradient(135deg, #030712 0%, #0A1628 40%, #0D0A2E 70%, #060D1F 100%)",
+      display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", gap: 20
+    }}>
+      <div style={{ fontSize: 28, fontWeight: 900, letterSpacing: "-0.03em", color: "white" }}>
+        PAWS<span style={{ color: "#F59E0B" }}> Alert</span>
+      </div>
+      {waking ? (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{
+              width: 18, height: 18, borderRadius: "50%",
+              border: "2px solid rgba(245,158,11,0.3)",
+              borderTop: "2px solid #F59E0B",
+              animation: "spin 0.8s linear infinite"
+            }} />
+            <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 14 }}>
+              Starting up server...
+            </span>
+          </div>
+          <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>
+            This takes about 15 seconds on first load
+          </div>
+        </>
+      ) : (
+        <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 14 }}>Connecting...</div>
+      )}
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+
   if (!loggedIn) return <LoginScreen onLogin={() => setLoggedIn(true)} />;
 
   return (
@@ -1777,6 +1850,7 @@ export default function App() {
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 99px; }
         @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes spin { to { transform: rotate(360deg); } }
       `}</style>
       <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", minHeight: "100vh", background: "linear-gradient(135deg, #030712 0%, #0A1628 40%, #0D0A2E 70%, #060D1F 100%)", fontFamily: "'Outfit', 'Segoe UI', system-ui, sans-serif", color: "white" }}>
         <Sidebar page={page} setPage={setPage} onLogout={handleLogout} />
