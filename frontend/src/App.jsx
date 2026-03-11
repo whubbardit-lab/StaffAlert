@@ -2,6 +2,15 @@ import { useState, useEffect, useCallback } from "react";
 
 const API = "https://staffalert.onrender.com/api";
 
+// 25002500 Auth helper 25002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500
+function authFetch(url, options = {}) {
+  const token = localStorage.getItem("paws_token");
+  return fetch(url, {
+    ...options,
+    headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` },
+  });
+}
+
 // ── Design 3 Glass Theme ───────────────────────────────────────────────────
 const g = {
   bg: "linear-gradient(135deg, #030712 0%, #0A1628 40%, #0D0A2E 70%, #060D1F 100%)",
@@ -267,7 +276,7 @@ function Dashboard({ setPage }) {
     setSelectedAlert(alertId);
     setReceiptsLoading(true);
     setReceipts(null);
-    try { setReceipts(await (await fetch(`${API}/receipts/${alertId}`)).json()); }
+    try { setReceipts(await (await authFetch(`${API}/receipts/${alertId}`)).json()); }
     catch { setReceipts({ error: "Could not load receipts" }); }
     finally { setReceiptsLoading(false); }
   };
@@ -275,10 +284,10 @@ function Dashboard({ setPage }) {
   const fetchData = useCallback(async () => {
     try {
       const [l, s, sc, sec] = await Promise.all([
-        fetch(`${API}/logs/`),
-        fetch(`${API}/logs/stats`),
-        fetch(`${API}/scheduled/`),
-        fetch(`${API}/alerts/sections-list`),
+        authFetch(`${API}/logs/`),
+        authFetch(`${API}/logs/stats`),
+        authFetch(`${API}/scheduled/`),
+        authFetch(`${API}/alerts/sections-list`),
       ]);
       setLogs(await l.json());
       setStats(await s.json());
@@ -295,7 +304,7 @@ function Dashboard({ setPage }) {
     if (qMessage.length > 160) { setQResult({ error: "Message exceeds 160 characters" }); return; }
     setQSending(true); setQResult(null);
     try {
-      const res = await fetch(`${API}/alerts/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ section_code: qSection, priority_level: qPriority, message: qMessage }) });
+      const res = await authFetch(`${API}/alerts/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ section_code: qSection, priority_level: qPriority, message: qMessage }) });
       const data = await res.json();
       if (!res.ok) setQResult({ error: data.detail || "Failed to send" });
       else { setQResult({ success: `✓ Sent to ${data.recipient_count} recipients` }); setQMessage(""); fetchData(); }
@@ -304,7 +313,7 @@ function Dashboard({ setPage }) {
   };
 
   const handleCancelScheduled = async (id) => {
-    await fetch(`${API}/scheduled/${id}`, { method: "DELETE" });
+    await authFetch(`${API}/scheduled/${id}`, { method: "DELETE" });
     fetchData();
   };
 
@@ -550,9 +559,9 @@ function SendAlert({ toast, setPage }) {
   const [sentSuccess, setSentSuccess] = useState(false);
 
   useEffect(() => {
-    fetch(`${API}/alerts/sections-list`).then(r => r.json()).then(setSections).catch(() => {});
-    fetch(`${API}/logs/`).then(r => r.json()).then(d => setRecentLogs(d.slice(0, 3))).catch(() => {});
-    fetch(`${API}/alerts/templates`).then(r => r.json()).then(setTemplates).catch(() => {});
+    authFetch(`${API}/alerts/sections-list`).then(r => r.json()).then(setSections).catch(() => {});
+    authFetch(`${API}/logs/`).then(r => r.json()).then(d => setRecentLogs(d.slice(0, 3))).catch(() => {});
+    authFetch(`${API}/alerts/templates`).then(r => r.json()).then(setTemplates).catch(() => {});
   }, []);
 
   const handleSend = async () => {
@@ -560,7 +569,7 @@ function SendAlert({ toast, setPage }) {
     if (message.length > 160) { toast("Message exceeds 160 characters", "error"); return; }
     setSending(true);
     try {
-      const res = await fetch(`${API}/alerts/send`, {
+      const res = await authFetch(`${API}/alerts/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ section_code: section, priority_level: priority, message })
@@ -573,7 +582,7 @@ function SendAlert({ toast, setPage }) {
         setSentSuccess(true);
         setMessage("");
         setTimeout(() => setSentSuccess(false), 3000);
-        fetch(`${API}/logs/`).then(r => r.json()).then(d => setRecentLogs(d.slice(0, 3))).catch(() => {});
+        authFetch(`${API}/logs/`).then(r => r.json()).then(d => setRecentLogs(d.slice(0, 3))).catch(() => {});
       }
     } catch { toast("Could not reach backend", "error"); }
     finally { setSending(false); }
@@ -881,18 +890,18 @@ function StaffManager({ toast }) {
   const [form, setForm] = useState({ name: "", phone_number: "", system_id: "", pin: "" });
   const [loading, setLoading] = useState(true);
 
-  const fetchStaff = async () => { try { setStaff(await (await fetch(`${API}/staff/`)).json()); } catch {} finally { setLoading(false); } };
+  const fetchStaff = async () => { try { setStaff(await (await authFetch(`${API}/staff/`)).json()); } catch {} finally { setLoading(false); } };
   useEffect(() => { fetchStaff(); }, []);
 
   const handleAdd = async () => {
     if (!form.name || !form.phone_number || !form.system_id || !form.pin) { toast("All fields required", "error"); return; }
-    const res = await fetch(`${API}/staff/`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+    const res = await authFetch(`${API}/staff/`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
     if (res.ok) { toast("Staff member added", "success"); setForm({ name: "", phone_number: "", system_id: "", pin: "" }); fetchStaff(); }
     else { const d = await res.json(); toast(d.detail || "Failed to add", "error"); }
   };
 
-  const handleToggle = async (id) => { await fetch(`${API}/staff/${id}/toggle`, { method: "PATCH" }); fetchStaff(); };
-  const handleDelete = async (id) => { if (!confirm("Delete this staff member?")) return; await fetch(`${API}/staff/${id}`, { method: "DELETE" }); fetchStaff(); };
+  const handleToggle = async (id) => { await authFetch(`${API}/staff/${id}/toggle`, { method: "PATCH" }); fetchStaff(); };
+  const handleDelete = async (id) => { if (!confirm("Delete this staff member?")) return; await authFetch(`${API}/staff/${id}`, { method: "DELETE" }); fetchStaff(); };
 
   const inputStyle = { ...glassInput, marginBottom: 0 };
 
@@ -951,7 +960,7 @@ function SectionsPage({ toast }) {
   const [saving, setSaving] = useState(false);
 
   const fetchSections = async () => {
-    try { setSections(await (await fetch(`${API}/sections`)).json()); }
+    try { setSections(await (await authFetch(`${API}/sections`)).json()); }
     catch {} finally { setLoading(false); }
   };
   useEffect(() => { fetchSections(); }, []);
@@ -960,7 +969,7 @@ function SectionsPage({ toast }) {
     if (!form.section_code || !form.section_name) { toast("Section code and name required", "error"); return; }
     setSaving(true);
     try {
-      const res = await fetch(`${API}/sections`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+      const res = await authFetch(`${API}/sections`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
       const data = await res.json();
       if (res.ok) { toast(`Section ${data.section_code} created — join code ${data.join_code} sent to staff`, "success"); setForm({ section_code: "", section_name: "" }); fetchSections(); }
       else toast(data.detail || "Failed to create section", "error");
@@ -970,7 +979,7 @@ function SectionsPage({ toast }) {
 
   const handleDelete = async (id, code) => {
     if (!confirm(`Delete section ${code}? This will also remove all student enrollments.`)) return;
-    await fetch(`${API}/sections/${id}`, { method: "DELETE" });
+    await authFetch(`${API}/sections/${id}`, { method: "DELETE" });
     fetchSections();
     toast(`Section ${code} deleted`, "success");
   };
@@ -978,7 +987,7 @@ function SectionsPage({ toast }) {
   const handleRegenCode = async (id, code) => {
     if (!confirm(`Regenerate join code for ${code}? The old code will stop working and staff will be texted the new one.`)) return;
     try {
-      const res = await fetch(`${API}/sections/${id}/regenerate-code`, { method: "POST" });
+      const res = await authFetch(`${API}/sections/${id}/regenerate-code`, { method: "POST" });
       const data = await res.json();
       if (res.ok) { toast(`New code for ${code}: ${data.join_code} — sent to all staff`, "success"); fetchSections(); }
       else toast("Failed to regenerate code", "error");
@@ -1069,13 +1078,13 @@ function StudentsPage({ toast }) {
   const [showAll, setShowAll] = useState(false);
 
   const fetchStudents = async () => {
-    try { setStudents(await (await fetch(`${API}/students?active_only=${!showAll}`)).json()); }
+    try { setStudents(await (await authFetch(`${API}/students?active_only=${!showAll}`)).json()); }
     catch {} finally { setLoading(false); }
   };
   useEffect(() => { fetchStudents(); }, [showAll]);
 
-  const handleDeactivate = async (id) => { await fetch(`${API}/students/${id}/deactivate`, { method: "PATCH" }); fetchStudents(); toast("Student deactivated", "success"); };
-  const handleDelete = async (id) => { if (!confirm("Remove this student?")) return; await fetch(`${API}/students/${id}`, { method: "DELETE" }); fetchStudents(); toast("Student removed", "success"); };
+  const handleDeactivate = async (id) => { await authFetch(`${API}/students/${id}/deactivate`, { method: "PATCH" }); fetchStudents(); toast("Student deactivated", "success"); };
+  const handleDelete = async (id) => { if (!confirm("Remove this student?")) return; await authFetch(`${API}/students/${id}`, { method: "DELETE" }); fetchStudents(); toast("Student removed", "success"); };
 
   const filtered = students.filter(s => !search || s.student_phone?.includes(search) || s.section?.section_code?.toLowerCase().includes(search.toLowerCase()) || s.student_name?.toLowerCase().includes(search.toLowerCase()));
 
@@ -1137,7 +1146,7 @@ function CSVImport({ toast }) {
     if (!manualForm.phone || !manualForm.section_code) { toast("Phone and section code required", "error"); return; }
     setManualSaving(true);
     try {
-      const res = await fetch(`${API}/students/manual`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(manualForm) });
+      const res = await authFetch(`${API}/students/manual`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(manualForm) });
       const data = await res.json();
       if (res.ok) { toast("Student added successfully", "success"); setManualForm({ phone: "", section_code: "", name: "" }); }
       else toast(data.detail || "Failed to add student", "error");
@@ -1150,7 +1159,7 @@ function CSVImport({ toast }) {
     setStudentUploading(true); setStudentResult(null);
     const form = new FormData(); form.append("file", studentFile);
     try {
-      const res = await fetch(`${API}/import/csv`, { method: "POST", body: form });
+      const res = await authFetch(`${API}/import/csv`, { method: "POST", body: form });
       const data = await res.json();
       if (res.ok) { setStudentResult(data); toast("Students imported", "success"); }
       else toast(data.detail || "Import failed", "error");
@@ -1163,7 +1172,7 @@ function CSVImport({ toast }) {
     setStaffUploading(true); setStaffResult(null);
     const form = new FormData(); form.append("file", staffFile);
     try {
-      const res = await fetch(`${API}/import/staff-csv`, { method: "POST", body: form });
+      const res = await authFetch(`${API}/import/staff-csv`, { method: "POST", body: form });
       const data = await res.json();
       if (res.ok) { setStaffResult(data); toast("Staff imported", "success"); }
       else toast(data.detail || "Import failed", "error");
@@ -1283,20 +1292,20 @@ function TemplatesPage({ toast }) {
   const [form, setForm] = useState({ name: "", message: "", section_code: "", priority_level: "NORMAL" });
   const [saving, setSaving] = useState(false);
 
-  const fetchTemplates = async () => { try { setTemplates(await (await fetch(`${API}/alerts/templates`)).json()); } catch {} };
+  const fetchTemplates = async () => { try { setTemplates(await (await authFetch(`${API}/alerts/templates`)).json()); } catch {} };
   useEffect(() => { fetchTemplates(); }, []);
 
   const handleSave = async () => {
     if (!form.name.trim() || !form.message.trim()) { toast("Name and message required", "error"); return; }
     setSaving(true);
     try {
-      await fetch(`${API}/alerts/templates`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+      await authFetch(`${API}/alerts/templates`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
       setForm({ name: "", message: "", section_code: "", priority_level: "NORMAL" });
       fetchTemplates(); toast("Template saved", "success");
     } finally { setSaving(false); }
   };
 
-  const handleDelete = async (id) => { if (!confirm("Delete this template?")) return; await fetch(`${API}/alerts/templates/${id}`, { method: "DELETE" }); fetchTemplates(); toast("Template deleted", "success"); };
+  const handleDelete = async (id) => { if (!confirm("Delete this template?")) return; await authFetch(`${API}/alerts/templates/${id}`, { method: "DELETE" }); fetchTemplates(); toast("Template deleted", "success"); };
 
   const prioColors = { NORMAL: "#93C5FD", URGENT: "#FCD34D", EMERGENCY: "#FCA5A5" };
 
@@ -1364,11 +1373,11 @@ function SchedulePage({ toast }) {
   const [form, setForm] = useState({ message: "", section_code: "00000", priority_level: "NORMAL", scheduled_for: "" });
   const [saving, setSaving] = useState(false);
 
-  const fetchScheduled = async () => { try { setScheduled(await (await fetch(`${API}/scheduled/`)).json()); } catch {} };
+  const fetchScheduled = async () => { try { setScheduled(await (await authFetch(`${API}/scheduled/`)).json()); } catch {} };
 
   useEffect(() => {
     fetchScheduled();
-    fetch(`${API}/alerts/sections-list`).then(r => r.json()).then(setSections).catch(() => {});
+    authFetch(`${API}/alerts/sections-list`).then(r => r.json()).then(setSections).catch(() => {});
     const i = setInterval(fetchScheduled, 30000);
     return () => clearInterval(i);
   }, []);
@@ -1378,7 +1387,7 @@ function SchedulePage({ toast }) {
     if (!form.scheduled_for) { toast("Please select date and time", "error"); return; }
     setSaving(true);
     try {
-      const res = await fetch(`${API}/scheduled/`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, scheduled_for: new Date(form.scheduled_for).toISOString() }) });
+      const res = await authFetch(`${API}/scheduled/`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, scheduled_for: new Date(form.scheduled_for).toISOString() }) });
       const data = await res.json();
       if (!res.ok) toast(data.detail || "Failed to schedule", "error");
       else { toast(`Scheduled for ${data.scheduled_for}`, "success"); setForm({ message: "", section_code: "00000", priority_level: "NORMAL", scheduled_for: "" }); fetchScheduled(); }
@@ -1386,7 +1395,7 @@ function SchedulePage({ toast }) {
     finally { setSaving(false); }
   };
 
-  const handleCancel = async (id) => { if (!confirm("Cancel this alert?")) return; await fetch(`${API}/scheduled/${id}`, { method: "DELETE" }); fetchScheduled(); toast("Alert cancelled", "success"); };
+  const handleCancel = async (id) => { if (!confirm("Cancel this alert?")) return; await authFetch(`${API}/scheduled/${id}`, { method: "DELETE" }); fetchScheduled(); toast("Alert cancelled", "success"); };
 
   const prioColors = { NORMAL: "#93C5FD", URGENT: "#FCD34D", EMERGENCY: "#FCA5A5" };
   const pending = scheduled.filter(a => a.status === "PENDING");
@@ -1486,7 +1495,7 @@ function StatisticsPage() {
 
   useEffect(() => {
     import("recharts").then(m => setRecharts(m)).catch(() => {});
-    fetch(`${API}/logs/stats/charts`).then(r => r.json()).then(d => { setData(d); setLoading(false); }).catch(() => { setError("Could not load statistics"); setLoading(false); });
+    authFetch(`${API}/logs/stats/charts`).then(r => r.json()).then(d => { setData(d); setLoading(false); }).catch(() => { setError("Could not load statistics"); setLoading(false); });
   }, []);
 
   if (loading || !Recharts) return <PageShell title="Statistics"><div style={{ padding: 48, textAlign: "center", color: g.muted }}><div style={{ fontSize: 32 }}>📊</div><div style={{ marginTop: 8 }}>Loading...</div></div></PageShell>;
@@ -1501,7 +1510,7 @@ function StatisticsPage() {
 
   return (
     <PageShell title="Statistics" subtitle="Analytics" actions={
-      <GlassBtn onClick={() => { setLoading(true); fetch(`${API}/logs/stats/charts`).then(r => r.json()).then(d => { setData(d); setLoading(false); }); }}>↻ Refresh</GlassBtn>
+      <GlassBtn onClick={() => { setLoading(true); authFetch(`${API}/logs/stats/charts`).then(r => r.json()).then(d => { setData(d); setLoading(false); }); }}>↻ Refresh</GlassBtn>
     }>
       {/* Summary */}
       <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
@@ -1649,7 +1658,7 @@ function AuditLogPage() {
 
   useEffect(() => {
     const token = localStorage.getItem("paws_token");
-    fetch(`${API}/auth/audit-logs`, { headers: { Authorization: `Bearer ${token}` } })
+    authFetch(`${API}/auth/audit-logs`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json()).then(d => { setLogs(d); setLoading(false); }).catch(() => setLoading(false));
   }, []);
 
@@ -1749,40 +1758,21 @@ export default function App() {
   const [waking, setWaking] = useState(false);
   const [toast, setToast] = useState(null);
 
-  // On mount — wait for backend to wake up, then validate token
   useEffect(() => {
     const token = localStorage.getItem("paws_token");
     if (!token) { setChecking(false); return; }
-
     const validateToken = async () => {
-      // Try up to 10 times with 2s gap — handles Render cold start (~15s)
       for (let i = 0; i < 10; i++) {
         try {
-          const res = await fetch(`${API}/auth/me`, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-          if (res.ok) {
-            setLoggedIn(true);
-            setChecking(false);
-            return;
-          }
-          if (res.status === 401) {
-            // Token invalid or expired — clear it and go to login
-            localStorage.removeItem("paws_token");
-            setChecking(false);
-            return;
-          }
-        } catch {
-          // Backend still waking up — show waking indicator after first fail
-          if (i === 0) setWaking(true);
-        }
+          const res = await fetch(`${API}/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+          if (res.ok) { setLoggedIn(true); setChecking(false); return; }
+          if (res.status === 401) { localStorage.removeItem("paws_token"); setChecking(false); return; }
+        } catch { if (i === 0) setWaking(true); }
         await new Promise(r => setTimeout(r, 2000));
       }
-      // Backend never responded — clear token and go to login
       localStorage.removeItem("paws_token");
       setChecking(false);
     };
-
     validateToken();
   }, []);
 
@@ -1802,33 +1792,16 @@ export default function App() {
     "Audit Log": <AuditLogPage />,
   };
 
-  // ── Loading screen — backend waking up ──────────────────────────────────
   if (checking) return (
-    <div style={{
-      minHeight: "100vh",
-      background: "linear-gradient(135deg, #030712 0%, #0A1628 40%, #0D0A2E 70%, #060D1F 100%)",
-      display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center", gap: 20
-    }}>
-      <div style={{ fontSize: 28, fontWeight: 900, letterSpacing: "-0.03em", color: "white" }}>
-        PAWS<span style={{ color: "#F59E0B" }}> Alert</span>
-      </div>
+    <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #030712 0%, #0A1628 40%, #0D0A2E 70%, #060D1F 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20 }}>
+      <div style={{ fontSize: 28, fontWeight: 900, letterSpacing: "-0.03em", color: "white" }}>PAWS<span style={{ color: "#F59E0B" }}> Alert</span></div>
       {waking ? (
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{
-              width: 18, height: 18, borderRadius: "50%",
-              border: "2px solid rgba(245,158,11,0.3)",
-              borderTop: "2px solid #F59E0B",
-              animation: "spin 0.8s linear infinite"
-            }} />
-            <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 14 }}>
-              Starting up server...
-            </span>
+            <div style={{ width: 18, height: 18, borderRadius: "50%", border: "2px solid rgba(245,158,11,0.3)", borderTop: "2px solid #F59E0B", animation: "spin 0.8s linear infinite" }} />
+            <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 14 }}>Starting up server...</span>
           </div>
-          <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>
-            This takes about 15 seconds on first load
-          </div>
+          <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>This takes about 15 seconds on first load</div>
         </>
       ) : (
         <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 14 }}>Connecting...</div>
@@ -1854,9 +1827,7 @@ export default function App() {
       `}</style>
       <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", minHeight: "100vh", background: "linear-gradient(135deg, #030712 0%, #0A1628 40%, #0D0A2E 70%, #060D1F 100%)", fontFamily: "'Outfit', 'Segoe UI', system-ui, sans-serif", color: "white" }}>
         <Sidebar page={page} setPage={setPage} onLogout={handleLogout} />
-        <div style={{ overflow: "auto" }}>
-          {pages[page]}
-        </div>
+        <div style={{ overflow: "auto" }}>{pages[page]}</div>
       </div>
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
     </>
