@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import Staff, Section, Subscription, AlertLog, DeliveryReceipt, SmsSession, UnknownNumberLog
 from sms import broadcast_sms, send_single_sms, handle_opt_out
-from security import validate_twilio_signature
+from security import validate_twilio_signature, hash_pin
 from datetime import datetime, timedelta
 import os, json, httpx
 
@@ -131,13 +131,22 @@ async def sms_webhook(
     Body: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    # Twilio signature validation
+    print(f"[SMS] Inbound: From={From!r} Body={Body[:80]!r}", flush=True)
+
+    # Render terminates TLS at the proxy — request.url has scheme http://.
+    # Twilio signs the public https:// URL, so reconstruct it from headers.
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("host", str(request.url.netloc))
+    url = f"{proto}://{host}{request.url.path}"
+
     auth_token = os.getenv("TWILIO_AUTH_TOKEN", "")
     signature = request.headers.get("X-Twilio-Signature", "")
-    url = str(request.url)
     form_data = await request.form()
-    params = dict(form_data)
+    # Coerce all values to str — multidict can contain UploadFile for multipart
+    params = {k: str(v) for k, v in form_data.items()}
+
     if auth_token and not validate_twilio_signature(auth_token, signature, url, params):
+        print(f"[SMS] Signature FAILED. url={url!r} sig={signature!r}", flush=True)
         raise HTTPException(status_code=403, detail="Invalid Twilio signature")
 
     from_number = normalize_phone(From.strip())
@@ -157,7 +166,12 @@ async def sms_webhook(
     if staff:
         return await handle_staff_sms(from_number, body, upper, staff, db)
 
-    # ── Step 2: Not staff — handle student keywords ────────────────────────
+    # ── Step 2: Check for in-progress staff registration ───────────────────
+    reg_session = db.query(SmsSession).filter(SmsSession.phone_number == from_number).first()
+    if reg_session and reg_session.state.startswith("staff_reg_"):
+        return await handle_staff_registration_step(from_number, body, upper, reg_session, db)
+
+    # ── Step 3: Not staff — handle student keywords ────────────────────────
     if upper.startswith("JOIN"):
         return await handle_join(from_number, body, upper, db)
 
@@ -173,10 +187,20 @@ async def sms_webhook(
             "JOIN [CODE] [JOINCODE] — subscribe to a section\n"
             "LEAVE [CODE] — unsubscribe\n"
             "MYSECTIONS — see your sections\n"
-            "STOP — opt out of all messages"
+            "STOP — opt out of all messages\n"
+            "STAFFREGISTER — register as staff (pending admin approval)"
         )
 
-    # ── Step 3: Unknown number ─────────────────────────────────────────────
+    # ── Step 4: Staff self-registration trigger ─────────────────────────────
+    if upper in ("STAFFREGISTER", "STAFF REGISTER", "REGISTER"):
+        new_session = get_or_create_session(db, from_number)
+        save_session(db, new_session, "staff_reg_name", {})
+        return (
+            "PAWS Alert Staff Registration\n"
+            "Reply with your full name to begin, or CANCEL to stop."
+        )
+
+    # ── Step 5: Unknown number ──────────────────────────────────────────────
     log = UnknownNumberLog(phone_number=from_number, message=body)
     db.add(log)
     db.commit()
@@ -402,6 +426,60 @@ async def execute_send(ctx: dict, staff, db: Session, session: SmsSession) -> st
         f"✓ Sent to {result['sent']}/{result['total']} students in {section_label}.\n"
         f"Failed: {result['failed']}. Reply MENU for options."
     )
+
+
+# ── STAFF SELF-REGISTRATION ────────────────────────────────────────────────
+async def handle_staff_registration_step(phone: str, body: str, upper: str, session: SmsSession, db: Session) -> str:
+    state = session.state
+    ctx = json.loads(session.context or "{}")
+
+    if upper in ("CANCEL", "STOP", "QUIT"):
+        reset_session(db, session)
+        return "PAWS Alert: Registration cancelled."
+
+    if state == "staff_reg_name":
+        name = body.strip()
+        if len(name) < 2:
+            return "Please reply with your full name."
+        ctx["name"] = name
+        save_session(db, session, "staff_reg_id", ctx)
+        return f"Hi {name}! What is your employee or system ID?\n(e.g. T00123456)"
+
+    if state == "staff_reg_id":
+        system_id = body.strip()
+        existing = db.query(Staff).filter(Staff.system_id == system_id).first()
+        if existing:
+            reset_session(db, session)
+            return f"PAWS Alert: System ID '{system_id}' is already registered. Contact an admin for help."
+        ctx["system_id"] = system_id
+        save_session(db, session, "staff_reg_pin", ctx)
+        return "Create a 4–6 digit PIN for dashboard access.\n(You can change it later in the dashboard)"
+
+    if state == "staff_reg_pin":
+        pin = body.strip()
+        if not pin.isdigit() or not (4 <= len(pin) <= 6):
+            return "PIN must be 4–6 digits only. Try again or reply CANCEL."
+        existing_phone = db.query(Staff).filter(Staff.phone_number == phone).first()
+        if existing_phone:
+            reset_session(db, session)
+            return "PAWS Alert: This phone number is already linked to a staff account."
+        new_staff = Staff(
+            name=ctx["name"],
+            phone_number=phone,
+            system_id=ctx["system_id"],
+            pin=hash_pin(pin),
+            is_active=False
+        )
+        db.add(new_staff)
+        db.commit()
+        reset_session(db, session)
+        return (
+            f"PAWS Alert: Registration submitted for {ctx['name']} ({ctx['system_id']}).\n"
+            f"Your account is pending admin approval. You'll be notified once activated."
+        )
+
+    reset_session(db, session)
+    return "Something went wrong. Please text STAFFREGISTER to try again."
 
 
 # ── STUDENT HANDLERS ───────────────────────────────────────────────────────
