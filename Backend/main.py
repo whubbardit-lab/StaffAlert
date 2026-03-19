@@ -21,6 +21,7 @@ from routes.auth import router as auth_router
 from routes.schedule import router as schedule_router
 from routes.schedule import check_and_fire_due_alerts
 from routes.receipts import router as receipts_router
+from routes.students import router as students_router
 
 # ── Scheduler setup ────────────────────────────────────────────────────────
 scheduler = AsyncIOScheduler()
@@ -105,6 +106,7 @@ app.include_router(logs_router, prefix="/api")
 app.include_router(alerts_router, prefix="/api")
 app.include_router(schedule_router, prefix="/api")
 app.include_router(receipts_router, prefix="/api")
+app.include_router(students_router, prefix="/api")
 
 @app.get("/")
 def root():
