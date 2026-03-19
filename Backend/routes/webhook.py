@@ -137,13 +137,24 @@ async def sms_webhook(
     # Twilio signs the public https:// URL, so reconstruct it from headers.
     proto = request.headers.get("x-forwarded-proto", request.url.scheme)
     host = request.headers.get("host", str(request.url.netloc))
-    url = f"{proto}://{host}{request.url.path}"
+    path = request.url.path
+    # Include query string if present — Twilio signs the full URL as configured
+    qs = request.url.query
+    url = f"{proto}://{host}{path}" + (f"?{qs}" if qs else "")
 
     auth_token = os.getenv("TWILIO_AUTH_TOKEN", "")
     signature = request.headers.get("X-Twilio-Signature", "")
     form_data = await request.form()
     # Coerce all values to str — multidict can contain UploadFile for multipart
     params = {k: str(v) for k, v in form_data.items()}
+
+    # ── TEMPORARY DEBUG — remove after signature issue is resolved ──────────
+    print(f"[SMS DEBUG] x-forwarded-proto={proto!r}", flush=True)
+    print(f"[SMS DEBUG] host={host!r}", flush=True)
+    print(f"[SMS DEBUG] reconstructed url={url!r}", flush=True)
+    print(f"[SMS DEBUG] X-Twilio-Signature={signature!r}", flush=True)
+    print(f"[SMS DEBUG] form params={params}", flush=True)
+    # ────────────────────────────────────────────────────────────────────────
 
     if auth_token and not validate_twilio_signature(auth_token, signature, url, params):
         print(f"[SMS] Signature FAILED. url={url!r} sig={signature!r}", flush=True)
