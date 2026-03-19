@@ -6,17 +6,19 @@ from models import Staff, Section, Subscription, AlertLog, DeliveryReceipt, SmsS
 from sms import broadcast_sms, send_single_sms, handle_opt_out
 from security import validate_twilio_signature
 from datetime import datetime, timedelta
-import os, json
+import os, json, httpx
 
 router = APIRouter()
 
 # ── Conversation states ────────────────────────────────────────────────────
-# idle → menu shown
-# send_section → waiting for section code
+# idle          → menu shown
+# send_section  → waiting for section code
 # send_priority → waiting for priority
-# send_message → waiting for message text
-# stats → (one-shot, no state needed)
-# code_section → waiting for section to get join code
+# send_message  → waiting for raw message input from staff
+# send_confirm  → Claude drafted a message, waiting for SEND / EDIT / CANCEL
+# send_refine   → staff wants to edit, waiting for revised message
+# stats         → (one-shot, no state needed)
+# code_section  → waiting for section to get join code
 
 
 def normalize_phone(phone: str) -> str:
@@ -65,6 +67,54 @@ def get_stats_message(db: Session) -> str:
     )
 
 
+async def get_claude_draft(raw_message: str, section_label: str, priority: str) -> str:
+    """Call Claude API to draft a clean PAWS Alert message."""
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        # Fallback: just format the raw message if no API key
+        prefix = f"[{priority}] " if priority != "NORMAL" else "[CAMPUS] "
+        return prefix + raw_message
+
+    prompt = (
+        f"You are a message formatter for PAWS Alert, a college SMS notification system at Pellissippi State Community College.\n\n"
+        f"A staff member wants to send this message to section {section_label}:\n"
+        f"Priority: {priority}\n"
+        f"Raw message: {raw_message}\n\n"
+        f"Rewrite it as a clean, professional SMS alert. Rules:\n"
+        f"- Start with 'PAWS Alert:' prefix\n"
+        f"- For URGENT add '[URGENT]' after prefix\n"
+        f"- For EMERGENCY add '[EMERGENCY]' after prefix\n"
+        f"- Keep it under 155 characters total\n"
+        f"- End with 'Reply STOP to opt out.' only for NORMAL priority\n"
+        f"- Be clear and direct, no fluff\n"
+        f"- Preserve all key details from the original\n\n"
+        f"Reply with ONLY the final SMS text, nothing else."
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 200,
+                    "messages": [{"role": "user", "content": prompt}]
+                }
+            )
+            data = response.json()
+            draft = data["content"][0]["text"].strip()
+            return draft
+    except Exception:
+        # Fallback on any error
+        prefix = f"[{priority}] " if priority != "NORMAL" else "[CAMPUS] "
+        return prefix + raw_message
+
+
 MENU = (
     "PAWS Alert — Staff Menu:\n"
     "1. Send an alert\n"
@@ -94,7 +144,7 @@ async def sms_webhook(
     body = Body.strip()
     upper = body.upper().strip()
 
-    # Handle global opt-out keywords first (Twilio handles these but we pass through)
+    # Handle global opt-out keywords first
     if handle_opt_out(from_number, body):
         return ""
 
@@ -126,7 +176,7 @@ async def sms_webhook(
             "STOP — opt out of all messages"
         )
 
-    # ── Step 3: Unknown number, not a recognized command ──────────────────
+    # ── Step 3: Unknown number ─────────────────────────────────────────────
     log = UnknownNumberLog(phone_number=from_number, message=body)
     db.add(log)
     db.commit()
@@ -148,7 +198,7 @@ async def handle_staff_sms(phone: str, body: str, upper: str, staff, db: Session
         reset_session(db, session)
         return f"Hi {staff.name}! 👋\n{MENU}"
 
-    # ── IDLE — show menu or parse intent ─────────────────────────────────
+    # ── IDLE — show menu or parse intent ──────────────────────────────────
     if state == "idle":
         if upper in ("1", "SEND", "SEND ALERT", "ALERT"):
             save_session(db, session, "send_section", {})
@@ -166,11 +216,11 @@ async def handle_staff_sms(phone: str, body: str, upper: str, staff, db: Session
             reset_session(db, session)
             return get_stats_message(db)
 
-        # Natural language fallback — just show menu
+        # Natural language fallback
         reset_session(db, session)
         return f"Hi {staff.name}! 👋\n{MENU}"
 
-    # ── SEND FLOW ─────────────────────────────────────────────────────────
+    # ── SEND FLOW ──────────────────────────────────────────────────────────
     if state == "send_section":
         section_code = upper.strip()
         if section_code == "ALL":
@@ -190,75 +240,100 @@ async def handle_staff_sms(phone: str, body: str, upper: str, staff, db: Session
             return "Reply NORMAL, URGENT, or EMERGENCY"
         ctx["priority"] = upper
         save_session(db, session, "send_message", ctx)
-        return f"Type your message (max 160 chars):"
+        return "What do you want to tell your students? Just describe it naturally — I'll format it for you."
 
     if state == "send_message":
-        if len(body) > 160:
-            return f"Too long ({len(body)}/160 chars). Please shorten it."
-        section_code = ctx.get("section_code", "00000")
-        priority = ctx.get("priority", "NORMAL")
-        section_label = ctx.get("section_label", "ALL")
-
-        # Resolve recipients
-        if section_code == "00000":
-            subs = db.query(Subscription).filter(Subscription.is_active == True).all()
-            recipients = list({s.student_phone for s in subs})
-            log_section = "ALL"
-        else:
-            section = db.query(Section).filter(Section.section_code == section_code).first()
-            if not section:
-                reset_session(db, session)
-                return "Section not found. Please start over."
-            subs = db.query(Subscription).filter(
-                Subscription.section_id == section.id, Subscription.is_active == True).all()
-            recipients = [s.student_phone for s in subs]
-            log_section = section_code
-
-        reset_session(db, session)
-
-        if not recipients:
-            return f"No active students in {section_label}. Alert not sent."
-
-        prefix = f"[{priority}] " if priority != "NORMAL" else "[CAMPUS] "
-        outbound = prefix + body
-        if len(outbound) > 160: outbound = body
-
-        result = await broadcast_sms(recipients, outbound)
-
-        # Log it
-        log = AlertLog(
-            sender_id=staff.id,
-            message_content=body,
-            recipient_count=result["sent"],
-            priority_level=priority,
-            section_code=log_section,
-            status="SENT" if result["failed"] == 0 else "PARTIAL"
-        )
-        db.add(log)
-        db.flush()
-        for detail in result.get("details", []):
-            db.add(DeliveryReceipt(
-                alert_log_id=log.id,
-                phone_number=detail["to"],
-                status=detail["status"],
-                error_message=detail.get("error")
-            ))
-        db.commit()
-
+        # Store raw input, call Claude to draft
+        ctx["raw_message"] = body
+        draft = await get_claude_draft(body, ctx.get("section_label", ""), ctx.get("priority", "NORMAL"))
+        ctx["draft"] = draft
+        save_session(db, session, "send_confirm", ctx)
+        char_count = len(draft)
         return (
-            f"✓ Sent to {result['sent']}/{result['total']} students in {section_label}.\n"
-            f"Failed: {result['failed']}. Reply MENU for options."
+            f"Here's your draft ({char_count}/160):\n\n"
+            f"{draft}\n\n"
+            f"Reply SEND to send, EDIT to change it, or type a new version."
         )
 
-    # ── JOIN CODE FLOW ────────────────────────────────────────────────────
+    if state == "send_confirm":
+        # SEND — approve and broadcast
+        if upper == "SEND":
+            return await execute_send(ctx, staff, db, session)
+
+        # EDIT — ask for changes
+        if upper == "EDIT":
+            save_session(db, session, "send_refine", ctx)
+            return "What would you like to change? Just tell me or type the full revised message."
+
+        # CANCEL
+        if upper == "CANCEL":
+            reset_session(db, session)
+            return "Cancelled. Reply MENU to start over."
+
+        # Staff typed a new version directly — treat as revised message
+        if len(body) <= 160:
+            ctx["draft"] = body
+            save_session(db, session, "send_confirm", ctx)
+            return (
+                f"Updated draft ({len(body)}/160):\n\n"
+                f"{body}\n\n"
+                f"Reply SEND to send, EDIT to change it, or type another version."
+            )
+        return f"Too long ({len(body)}/160 chars). Shorten it or reply EDIT to revise."
+
+    if state == "send_refine":
+        # Staff describes what to change or types a new message
+        current_draft = ctx.get("draft", "")
+        priority = ctx.get("priority", "NORMAL")
+        section_label = ctx.get("section_label", "")
+
+        # Ask Claude to revise based on feedback
+        api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        if api_key:
+            prompt = (
+                f"You are editing a PAWS Alert SMS for {section_label} (priority: {priority}).\n\n"
+                f"Current draft:\n{current_draft}\n\n"
+                f"Staff feedback or revision:\n{body}\n\n"
+                f"Produce a revised SMS under 155 characters. Keep PAWS Alert prefix and priority tag. "
+                f"Reply with ONLY the final SMS text."
+            )
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers={
+                            "x-api-key": api_key,
+                            "anthropic-version": "2023-06-01",
+                            "content-type": "application/json"
+                        },
+                        json={
+                            "model": "claude-haiku-4-5-20251001",
+                            "max_tokens": 200,
+                            "messages": [{"role": "user", "content": prompt}]
+                        }
+                    )
+                    data = response.json()
+                    revised = data["content"][0]["text"].strip()
+            except Exception:
+                revised = body if len(body) <= 160 else current_draft
+        else:
+            revised = body if len(body) <= 160 else current_draft
+
+        ctx["draft"] = revised
+        save_session(db, session, "send_confirm", ctx)
+        return (
+            f"Revised draft ({len(revised)}/160):\n\n"
+            f"{revised}\n\n"
+            f"Reply SEND to send, EDIT to change it, or type another version."
+        )
+
+    # ── JOIN CODE FLOW ─────────────────────────────────────────────────────
     if state == "code_section":
         section = db.query(Section).filter(Section.section_code == upper).first()
         if not section:
             return f"Section '{upper}' not found. Try again or reply CANCEL."
         reset_session(db, session)
-        # Check if code is expired
         if not section.join_code or (section.join_code_expires and section.join_code_expires < datetime.utcnow()):
-            # Regenerate
             from routes.sections import generate_join_code
             section.join_code = generate_join_code()
             section.join_code_expires = datetime.utcnow() + timedelta(days=7)
@@ -276,10 +351,62 @@ async def handle_staff_sms(phone: str, body: str, upper: str, staff, db: Session
     return f"Hi {staff.name}! 👋\n{MENU}"
 
 
+# ── SEND EXECUTOR (shared by send_confirm) ─────────────────────────────────
+async def execute_send(ctx: dict, staff, db: Session, session: SmsSession) -> str:
+    section_code = ctx.get("section_code", "00000")
+    priority = ctx.get("priority", "NORMAL")
+    section_label = ctx.get("section_label", "ALL")
+    final_message = ctx.get("draft", ctx.get("raw_message", ""))
+
+    if section_code == "00000":
+        subs = db.query(Subscription).filter(Subscription.is_active == True).all()
+        recipients = list({s.student_phone for s in subs})
+        log_section = "ALL"
+    else:
+        section = db.query(Section).filter(Section.section_code == section_code).first()
+        if not section:
+            reset_session(db, session)
+            return "Section not found. Please start over."
+        subs = db.query(Subscription).filter(
+            Subscription.section_id == section.id, Subscription.is_active == True).all()
+        recipients = [s.student_phone for s in subs]
+        log_section = section_code
+
+    reset_session(db, session)
+
+    if not recipients:
+        return f"No active students in {section_label}. Alert not sent."
+
+    result = await broadcast_sms(recipients, final_message)
+
+    log = AlertLog(
+        sender_id=staff.id,
+        message_content=final_message,
+        recipient_count=result["sent"],
+        priority_level=priority,
+        section_code=log_section,
+        status="SENT" if result["failed"] == 0 else "PARTIAL"
+    )
+    db.add(log)
+    db.flush()
+    for detail in result.get("details", []):
+        db.add(DeliveryReceipt(
+            alert_log_id=log.id,
+            phone_number=detail["to"],
+            status=detail["status"],
+            error_message=detail.get("error")
+        ))
+    db.commit()
+
+    return (
+        f"✓ Sent to {result['sent']}/{result['total']} students in {section_label}.\n"
+        f"Failed: {result['failed']}. Reply MENU for options."
+    )
+
+
 # ── STUDENT HANDLERS ───────────────────────────────────────────────────────
 async def handle_join(phone: str, body: str, upper: str, db: Session) -> str:
     parts = upper.split()
-    # Expected: JOIN SECTIONCODE [JOINCODE]
     if len(parts) < 2:
         return "PAWS Alert: Text JOIN [SECTIONCODE] [JOINCODE] to enroll.\nExample: JOIN CS101 XK9P2M"
 
@@ -290,7 +417,6 @@ async def handle_join(phone: str, body: str, upper: str, db: Session) -> str:
     if not section:
         return f"PAWS Alert: Section '{section_code}' not found. Check the code with your instructor."
 
-    # Validate join code
     now = datetime.utcnow()
     code_valid = (
         section.join_code and
@@ -305,7 +431,6 @@ async def handle_join(phone: str, body: str, upper: str, db: Session) -> str:
             f"JOIN {section_code} [JOINCODE]"
         )
 
-    # Already subscribed?
     existing = db.query(Subscription).filter(
         Subscription.student_phone == phone,
         Subscription.section_id == section.id,
@@ -314,7 +439,6 @@ async def handle_join(phone: str, body: str, upper: str, db: Session) -> str:
     if existing:
         return f"PAWS Alert: You're already enrolled in {section_code}."
 
-    # Reactivate or create
     inactive = db.query(Subscription).filter(
         Subscription.student_phone == phone,
         Subscription.section_id == section.id,
