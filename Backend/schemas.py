@@ -39,8 +39,12 @@ class StaffUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
-class StaffOut(StaffBase):
+class StaffOut(BaseModel):
     id: int
+    name: str
+    phone_number: str
+    system_id: str
+    is_active: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
