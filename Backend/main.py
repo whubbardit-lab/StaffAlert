@@ -19,7 +19,7 @@ from routes.logs import router as logs_router
 from routes.alerts import router as alerts_router
 from routes.auth import router as auth_router
 from routes.schedule import router as schedule_router
-from routes.schedule import check_and_fire_due_alerts
+from routes.schedule import check_and_fire_due_alerts, check_expired_sections
 from routes.receipts import router as receipts_router
 from routes.students import router as students_router
 
@@ -29,6 +29,7 @@ scheduler = AsyncIOScheduler()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler.add_job(check_and_fire_due_alerts, "interval", minutes=1, id="alert_scheduler")
+    scheduler.add_job(check_expired_sections, "cron", hour=2, minute=0, id="section_cleanup")
     scheduler.start()
     yield
     scheduler.shutdown()
