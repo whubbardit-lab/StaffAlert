@@ -3,7 +3,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 from database import get_db
 from models import Staff, Section, Subscription, AlertLog, DeliveryReceipt, SmsSession, UnknownNumberLog
-from sms import broadcast_sms, send_single_sms, handle_opt_out
+from sms import broadcast_sms, send_single_sms, handle_opt_out, translate_to_spanish
 from security import validate_twilio_signature, hash_pin
 from datetime import datetime, timedelta
 import os, json, httpx
@@ -67,6 +67,25 @@ def get_stats_message(db: Session) -> str:
     )
 
 
+def get_staff_students_message(staff, db: Session) -> str:
+    sections = db.query(Section).filter(Section.staff_id == staff.id).all()
+    if not sections:
+        return "You have no sections. Reply 4 to create one."
+    lines = ["Your students:"]
+    for section in sections:
+        subs = db.query(Subscription).filter(
+            Subscription.section_id == section.id,
+            Subscription.is_active == True
+        ).all()
+        lines.append(f"\n{section.section_code}:")
+        if subs:
+            for sub in subs:
+                lines.append(f"  {sub.student_name or 'Unknown'}")
+        else:
+            lines.append("  (no students)")
+    return "\n".join(lines)
+
+
 async def get_claude_draft(raw_message: str, section_label: str, priority: str) -> str:
     """Call Claude API to draft a clean PAWS Alert message."""
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
@@ -120,6 +139,8 @@ MENU = (
     "1. Send an alert\n"
     "2. Get section join code\n"
     "3. Check stats\n"
+    "4. Create a section\n"
+    "5. View my students\n"
     "Reply with a number or just tell me what you need."
 )
 
@@ -177,10 +198,12 @@ async def sms_webhook(
     if staff:
         return await handle_staff_sms(from_number, body, upper, staff, db)
 
-    # ── Step 2: Check for in-progress staff registration ───────────────────
+    # ── Step 2: Check for in-progress sessions ─────────────────────────────
     reg_session = db.query(SmsSession).filter(SmsSession.phone_number == from_number).first()
     if reg_session and reg_session.state.startswith("staff_reg_"):
         return await handle_staff_registration_step(from_number, body, upper, reg_session, db)
+    if reg_session and reg_session.state in ("join_name", "join_lang"):
+        return await handle_join_step(from_number, body, upper, reg_session, db)
 
     # ── Step 3: Not staff — handle student keywords ────────────────────────
     if upper.startswith("JOIN"):
@@ -203,7 +226,19 @@ async def sms_webhook(
         )
 
     # ── Step 4: Staff self-registration trigger ─────────────────────────────
-    if upper in ("STAFFREGISTER", "STAFF REGISTER", "REGISTER"):
+    if upper.startswith("STAFFREGISTER"):
+        parts = body.strip().split()
+        secret_code = os.getenv("STAFF_REGISTRATION_CODE", "")
+        provided = parts[1].upper() if len(parts) >= 2 else ""
+        if not secret_code or provided != secret_code.upper():
+            log = UnknownNumberLog(phone_number=from_number, message=body)
+            db.add(log)
+            db.commit()
+            return (
+                "PAWS Alert: Number not detected. This line is reserved for "
+                "enrolled students and registered staff. "
+                "To enroll, text JOIN [SECTIONCODE] [JOINCODE] to this number."
+            )
         new_session = get_or_create_session(db, from_number)
         save_session(db, new_session, "staff_reg_name", {})
         return (
@@ -250,6 +285,14 @@ async def handle_staff_sms(phone: str, body: str, upper: str, staff, db: Session
         if upper in ("3", "STATS", "STATISTICS", "STATUS"):
             reset_session(db, session)
             return get_stats_message(db)
+
+        if upper in ("4", "CREATE SECTION", "NEW SECTION"):
+            save_session(db, session, "create_sec_name", {})
+            return "New section — what is the section name? (e.g. 'Introduction to Biology')\nReply CANCEL to stop."
+
+        if upper in ("5", "MY STUDENTS", "VIEW STUDENTS"):
+            reset_session(db, session)
+            return get_staff_students_message(staff, db)
 
         # Natural language fallback
         reset_session(db, session)
@@ -362,6 +405,54 @@ async def handle_staff_sms(phone: str, body: str, upper: str, staff, db: Session
             f"Reply SEND to send, EDIT to change it, or type another version."
         )
 
+    # ── CREATE SECTION FLOW ────────────────────────────────────────────────
+    if state == "create_sec_name":
+        name = body.strip()
+        if len(name) < 2:
+            return "Please enter a section name or reply CANCEL."
+        ctx["section_name"] = name
+        save_session(db, session, "create_sec_code", ctx)
+        return "What section code should this use? (e.g. BIOL101)\nReply CANCEL to stop."
+
+    if state == "create_sec_code":
+        code = upper.strip()
+        existing = db.query(Section).filter(Section.section_code == code).first()
+        if existing:
+            return f"Section code '{code}' is already taken. Try a different code or reply CANCEL."
+        ctx["section_code"] = code
+        save_session(db, session, "create_sec_end", ctx)
+        return "When does this section end? Reply MM/DD (e.g. 05/15) or NONE for no end date."
+
+    if state == "create_sec_end":
+        end_date = None
+        if upper.strip() != "NONE":
+            try:
+                parsed = datetime.strptime(body.strip(), "%m/%d")
+                end_date = parsed.replace(year=datetime.utcnow().year)
+                if end_date < datetime.utcnow():
+                    end_date = end_date.replace(year=end_date.year + 1)
+            except ValueError:
+                return "Invalid date format. Use MM/DD (e.g. 05/15) or NONE."
+        from routes.sections import generate_join_code
+        join_code = generate_join_code()
+        new_section = Section(
+            section_code=ctx["section_code"],
+            section_name=ctx["section_name"],
+            join_code=join_code,
+            join_code_expires=datetime.utcnow() + timedelta(days=7),
+            staff_id=staff.id,
+            end_date=end_date,
+        )
+        db.add(new_section)
+        db.commit()
+        reset_session(db, session)
+        end_str = end_date.strftime("%b %d") if end_date else "no end date"
+        return (
+            f"Section '{ctx['section_code']}' created! ({end_str})\n"
+            f"Join code: {join_code}\n"
+            f"Students text: JOIN {ctx['section_code']} {join_code}"
+        )
+
     # ── JOIN CODE FLOW ─────────────────────────────────────────────────────
     if state == "code_section":
         section = db.query(Section).filter(Section.section_code == upper).first()
@@ -395,7 +486,11 @@ async def execute_send(ctx: dict, staff, db: Session, session: SmsSession) -> st
 
     if section_code == "00000":
         subs = db.query(Subscription).filter(Subscription.is_active == True).all()
-        recipients = list({s.student_phone for s in subs})
+        # Deduplicate by phone while keeping sub objects for language lookup
+        seen = {}
+        for s in subs:
+            seen[s.student_phone] = s
+        subs = list(seen.values())
         log_section = "ALL"
     else:
         section = db.query(Section).filter(Section.section_code == section_code).first()
@@ -404,27 +499,45 @@ async def execute_send(ctx: dict, staff, db: Session, session: SmsSession) -> st
             return "Section not found. Please start over."
         subs = db.query(Subscription).filter(
             Subscription.section_id == section.id, Subscription.is_active == True).all()
-        recipients = [s.student_phone for s in subs]
         log_section = section_code
 
     reset_session(db, session)
 
-    if not recipients:
+    if not subs:
         return f"No active students in {section_label}. Alert not sent."
 
-    result = await broadcast_sms(recipients, final_message)
+    en_phones = [s.student_phone for s in subs if (s.language or "EN") == "EN"]
+    es_phones = [s.student_phone for s in subs if (s.language or "EN") == "ES"]
 
+    total_sent = 0
+    total_failed = 0
+    all_details = []
+
+    if en_phones:
+        result_en = await broadcast_sms(en_phones, final_message)
+        total_sent += result_en["sent"]
+        total_failed += result_en["failed"]
+        all_details.extend(result_en.get("details", []))
+
+    if es_phones:
+        es_message = await translate_to_spanish(final_message)
+        result_es = await broadcast_sms(es_phones, es_message)
+        total_sent += result_es["sent"]
+        total_failed += result_es["failed"]
+        all_details.extend(result_es.get("details", []))
+
+    total = len(subs)
     log = AlertLog(
         sender_id=staff.id,
         message_content=final_message,
-        recipient_count=result["sent"],
+        recipient_count=total_sent,
         priority_level=priority,
         section_code=log_section,
-        status="SENT" if result["failed"] == 0 else "PARTIAL"
+        status="SENT" if total_failed == 0 else "PARTIAL"
     )
     db.add(log)
     db.flush()
-    for detail in result.get("details", []):
+    for detail in all_details:
         db.add(DeliveryReceipt(
             alert_log_id=log.id,
             phone_number=detail["to"],
@@ -434,8 +547,8 @@ async def execute_send(ctx: dict, staff, db: Session, session: SmsSession) -> st
     db.commit()
 
     return (
-        f"✓ Sent to {result['sent']}/{result['total']} students in {section_label}.\n"
-        f"Failed: {result['failed']}. Reply MENU for options."
+        f"✓ Sent to {total_sent}/{total} students in {section_label}.\n"
+        f"Failed: {total_failed}. Reply MENU for options."
     )
 
 
@@ -479,14 +592,14 @@ async def handle_staff_registration_step(phone: str, body: str, upper: str, sess
             phone_number=phone,
             system_id=ctx["system_id"],
             pin=hash_pin(pin),
-            is_active=False
+            is_active=True
         )
         db.add(new_staff)
         db.commit()
         reset_session(db, session)
         return (
-            f"PAWS Alert: Registration submitted for {ctx['name']} ({ctx['system_id']}).\n"
-            f"Your account is pending admin approval. You'll be notified once activated."
+            f"PAWS Alert: Welcome, {ctx['name']}! Your staff account is active.\n"
+            f"Text MENU to see your options."
         )
 
     reset_session(db, session)
@@ -528,23 +641,77 @@ async def handle_join(phone: str, body: str, upper: str, db: Session) -> str:
     if existing:
         return f"PAWS Alert: You're already enrolled in {section_code}."
 
-    inactive = db.query(Subscription).filter(
-        Subscription.student_phone == phone,
-        Subscription.section_id == section.id,
-        Subscription.is_active == False
-    ).first()
-    if inactive:
-        inactive.is_active = True
-        db.commit()
-    else:
-        db.add(Subscription(student_phone=phone, section_id=section.id, is_active=True))
-        db.commit()
+    # Start multi-step join flow: collect name then language preference
+    join_session = get_or_create_session(db, phone)
+    save_session(db, join_session, "join_name", {
+        "section_id": section.id,
+        "section_code": section.section_code,
+        "section_name": section.section_name,
+    })
+    return "What is your name? (Reply CANCEL to abort)"
 
-    return (
-        f"Welcome to PAWS Alert for {section_code} — {section.section_name} "
-        f"at Pellissippi State! You'll receive class updates and alerts. "
-        f"Reply LEAVE {section_code} to unsubscribe. Msg & data rates may apply."
-    )
+
+async def handle_join_step(phone: str, body: str, upper: str, session: SmsSession, db: Session) -> str:
+    state = session.state
+    ctx = json.loads(session.context or "{}")
+
+    if upper in ("CANCEL", "STOP", "QUIT"):
+        reset_session(db, session)
+        return "PAWS Alert: Join cancelled."
+
+    if state == "join_name":
+        name = body.strip()
+        if len(name) < 2:
+            return "Please reply with your name to complete enrollment."
+        ctx["student_name"] = name
+        save_session(db, session, "join_lang", ctx)
+        return "Do you prefer English or Spanish? Reply EN or ES."
+
+    if state == "join_lang":
+        lang = upper.strip()
+        if lang not in ("EN", "ES"):
+            return "Please reply EN for English or ES for Spanish."
+
+        section_id = ctx.get("section_id")
+        section_code = ctx.get("section_code")
+        section_name = ctx.get("section_name")
+        student_name = ctx.get("student_name")
+
+        inactive = db.query(Subscription).filter(
+            Subscription.student_phone == phone,
+            Subscription.section_id == section_id,
+            Subscription.is_active == False
+        ).first()
+        if inactive:
+            inactive.is_active = True
+            inactive.student_name = student_name
+            inactive.language = lang
+            db.commit()
+        else:
+            db.add(Subscription(
+                student_phone=phone,
+                section_id=section_id,
+                student_name=student_name,
+                language=lang,
+                is_active=True,
+            ))
+            db.commit()
+
+        reset_session(db, session)
+
+        welcome_en = (
+            f"Welcome to PAWS Alert for {section_code} — {section_name} "
+            f"at Pellissippi State! You'll receive class updates and alerts. "
+            f"Reply LEAVE {section_code} to unsubscribe. Msg & data rates may apply."
+        )
+        if lang == "ES":
+            welcome = await translate_to_spanish(welcome_en)
+        else:
+            welcome = welcome_en
+        return welcome
+
+    reset_session(db, session)
+    return "Something went wrong. Please text JOIN [SECTIONCODE] [JOINCODE] to try again."
 
 
 def handle_leave(phone: str, body: str, upper: str, db: Session) -> str:
