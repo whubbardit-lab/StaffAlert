@@ -14,6 +14,7 @@ class Staff(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     alert_logs = relationship("AlertLog", back_populates="sender")
+    sections = relationship("Section", back_populates="staff_member")
 
 
 class Section(Base):
@@ -23,7 +24,11 @@ class Section(Base):
     section_name = Column(String(100), nullable=False)
     join_code = Column(String(10), nullable=True)
     join_code_expires = Column(DateTime, nullable=True)
+    staff_id = Column(Integer, ForeignKey("staff.id"), nullable=True)
+    end_date = Column(DateTime, nullable=True)
+    is_expired = Column(Boolean, default=False)
     subscriptions = relationship("Subscription", back_populates="section")
+    staff_member = relationship("Staff", back_populates="sections")
 
 
 class Subscription(Base):
@@ -31,6 +36,7 @@ class Subscription(Base):
     id = Column(Integer, primary_key=True, index=True)
     student_phone = Column(String(20), nullable=False)
     student_name = Column(String(100), nullable=True)
+    language = Column(String(2), default="EN")
     graduation_date = Column(DateTime, nullable=True)
     is_active = Column(Boolean, default=True)
     section_id = Column(Integer, ForeignKey("sections.id"), nullable=False)
