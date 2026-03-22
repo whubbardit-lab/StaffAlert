@@ -5,7 +5,7 @@ from security import require_auth
 from models import Section, Subscription, Staff
 from schemas import SectionCreate, SectionOut, SubscriptionCreate, SubscriptionOut
 from sms import send_single_sms
-from typing import List
+from typing import List, Optional
 from datetime import datetime, timedelta
 import csv, io, random, string, json
 
@@ -17,24 +17,38 @@ def generate_join_code(length=6) -> str:
 
 
 def sms_join_code_to_staff(section: Section, db: Session):
-    """SMS the new join code to all active staff."""
-    staff_list = db.query(Staff).filter(Staff.is_active == True, Staff.phone_number != None).all()
+    """SMS the join code only to the staff member who owns this section."""
+    if not section.staff_id:
+        return
+    staff = db.query(Staff).filter(
+        Staff.id == section.staff_id,
+        Staff.is_active == True,
+        Staff.phone_number != None,
+    ).first()
+    if not staff:
+        return
     msg = (
-        f"PAWS Alert: New join code for {section.section_code} — {section.section_name}\n"
+        f"PAWS Alert: Join code for {section.section_code} — {section.section_name}\n"
         f"Code: {section.join_code}\n"
         f"Valid 7 days. Students text: JOIN {section.section_code} {section.join_code}"
     )
-    for s in staff_list:
-        try:
-            send_single_sms(s.phone_number, msg)
-        except Exception:
-            pass
+    try:
+        send_single_sms(staff.phone_number, msg)
+    except Exception:
+        pass
 
 
 # ── Sections CRUD ──────────────────────────────────────────────────────────
 @router.get("/sections")
-def get_sections(db: Session = Depends(get_db), auth=Depends(require_auth)):
-    sections = db.query(Section).all()
+def get_sections(
+    staff_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    auth=Depends(require_auth),
+):
+    query = db.query(Section)
+    if staff_id is not None:
+        query = query.filter(Section.staff_id == staff_id)
+    sections = query.all()
     result = []
     for s in sections:
         count = db.query(Subscription).filter(
@@ -45,8 +59,11 @@ def get_sections(db: Session = Depends(get_db), auth=Depends(require_auth)):
             "id": s.id,
             "section_code": s.section_code,
             "section_name": s.section_name,
+            "staff_id": s.staff_id,
             "join_code": s.join_code,
             "join_code_expires": s.join_code_expires.isoformat() if s.join_code_expires else None,
+            "end_date": s.end_date.isoformat() if s.end_date else None,
+            "is_expired": s.is_expired,
             "student_count": count,
         })
     return result
@@ -64,18 +81,21 @@ def create_section(section: SectionCreate, db: Session = Depends(get_db), auth=D
         section_name=section.section_name,
         join_code=code,
         join_code_expires=expires,
+        staff_id=section.staff_id,
     )
     db.add(db_section)
     db.commit()
     db.refresh(db_section)
-    # SMS all staff with the new join code
     sms_join_code_to_staff(db_section, db)
     return {
         "id": db_section.id,
         "section_code": db_section.section_code,
         "section_name": db_section.section_name,
+        "staff_id": db_section.staff_id,
         "join_code": db_section.join_code,
         "join_code_expires": db_section.join_code_expires.isoformat(),
+        "end_date": None,
+        "is_expired": False,
         "student_count": 0,
     }
 
@@ -124,6 +144,7 @@ def get_all_students(active_only: bool = True, db: Session = Depends(get_db), au
             "id": s.id,
             "student_name": s.student_name or "Unknown",
             "student_phone": s.student_phone,
+            "language": s.language or "EN",
             "section_code": s.section.section_code if s.section else "N/A",
             "section_name": s.section.section_name if s.section else "N/A",
             "graduation_date": s.graduation_date.strftime("%Y-%m-%d") if s.graduation_date else None,
