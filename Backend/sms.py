@@ -1,5 +1,6 @@
 import os
 import asyncio
+import httpx
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
 from dotenv import load_dotenv
@@ -55,6 +56,36 @@ async def broadcast_sms(recipients: list[str], body: str) -> dict:
         "total": len(recipients),
         "details": results
     }
+
+
+async def translate_to_spanish(message: str) -> str:
+    """Translate an outbound SMS to Spanish using Claude Haiku. Falls back to original on error."""
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return message
+    prompt = (
+        "Translate the following SMS message to Spanish. "
+        "Return ONLY the translated text, nothing else.\n\n" + message
+    )
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 300,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+            data = response.json()
+            return data["content"][0]["text"].strip()
+    except Exception:
+        return message
 
 
 def handle_opt_out(from_number: str, body: str) -> bool:
