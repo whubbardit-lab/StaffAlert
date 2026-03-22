@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 from database import get_db
 from security import require_auth
 from database import SessionLocal
-from models import ScheduledAlert, Section, Subscription, AlertLog
-from sms import broadcast_sms
+from models import ScheduledAlert, Section, Subscription, AlertLog, Staff
+from sms import broadcast_sms, send_single_sms, translate_to_spanish
 from pydantic import BaseModel, field_validator
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
@@ -99,6 +99,63 @@ def check_and_fire_due_alerts():
             asyncio.create_task(fire_scheduled_alert(alert.id))
     except Exception as e:
         logger.error(f"Scheduler check error: {e}")
+    finally:
+        db.close()
+
+
+async def check_expired_sections():
+    """Nightly job: expire sections past end_date, notify students and instructors."""
+    db = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        expired_sections = db.query(Section).filter(
+            Section.end_date != None,
+            Section.end_date <= now,
+            Section.is_expired == False
+        ).all()
+
+        for section in expired_sections:
+            subs = db.query(Subscription).filter(
+                Subscription.section_id == section.id,
+                Subscription.is_active == True
+            ).all()
+            student_count = len(subs)
+
+            farewell_en = (
+                f"PAWS Alert: Your section {section.section_code} — {section.section_name} "
+                f"has ended. You have been unenrolled. Thank you for using PAWS Alert!"
+            )
+
+            en_phones = [s.student_phone for s in subs if (s.language or "EN") == "EN"]
+            es_phones = [s.student_phone for s in subs if (s.language or "EN") == "ES"]
+
+            if en_phones:
+                await broadcast_sms(en_phones, farewell_en)
+            if es_phones:
+                farewell_es = await translate_to_spanish(farewell_en)
+                await broadcast_sms(es_phones, farewell_es)
+
+            for sub in subs:
+                sub.is_active = False
+
+            section.join_code = None
+            section.is_expired = True
+            db.commit()
+
+            if section.staff_id:
+                staff = db.query(Staff).filter(Staff.id == section.staff_id).first()
+                if staff and staff.phone_number:
+                    summary = (
+                        f"PAWS Alert: Section {section.section_code} has expired. "
+                        f"{student_count} student(s) were enrolled. "
+                        f"Reply 4 to create a new section."
+                    )
+                    send_single_sms(staff.phone_number, summary)
+
+            logger.info(f"Expired section {section.section_code} ({student_count} students notified)")
+
+    except Exception as e:
+        logger.error(f"Section cleanup error: {e}")
     finally:
         db.close()
 
