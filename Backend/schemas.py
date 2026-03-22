@@ -53,7 +53,7 @@ class SectionBase(BaseModel):
 
 
 class SectionCreate(SectionBase):
-    pass
+    staff_id: Optional[int] = None
 
 
 class SectionOut(SectionBase):
