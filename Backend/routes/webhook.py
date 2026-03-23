@@ -272,13 +272,13 @@ async def handle_staff_sms(phone: str, body: str, upper: str, staff, db: Session
     if state == "idle":
         if upper in ("1", "SEND", "SEND ALERT", "ALERT"):
             save_session(db, session, "send_section", {})
-            sections = db.query(Section).all()
+            sections = db.query(Section).filter(Section.staff_id == staff.id).all()
             codes = ", ".join([s.section_code for s in sections]) or "none"
             return f"Which section? Reply with code or ALL.\nAvailable: {codes}"
 
         if upper in ("2", "CODE", "JOIN CODE", "GET CODE", "JOINCODE"):
             save_session(db, session, "code_section", {})
-            sections = db.query(Section).all()
+            sections = db.query(Section).filter(Section.staff_id == staff.id).all()
             codes = ", ".join([s.section_code for s in sections]) or "none"
             return f"Which section do you need a join code for?\nAvailable: {codes}"
 
