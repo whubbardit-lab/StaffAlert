@@ -3,10 +3,10 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 from database import get_db
 from models import Staff, Section, Subscription, AlertLog, DeliveryReceipt, SmsSession, UnknownNumberLog
-from sms import broadcast_sms, send_single_sms, handle_opt_out, translate_to_spanish
+from sms import broadcast_sms, send_single_sms, send_whatsapp_message, handle_opt_out, translate_to_spanish
 from security import validate_twilio_signature, hash_pin
 from datetime import datetime, timedelta
-import os, json, httpx
+import os, json, asyncio, httpx
 
 router = APIRouter()
 
@@ -22,6 +22,9 @@ router = APIRouter()
 
 
 def normalize_phone(phone: str) -> str:
+    # Strip WhatsApp channel prefix before any other normalization
+    if phone.lower().startswith("whatsapp:"):
+        phone = phone[len("whatsapp:"):]
     cleaned = phone.replace("-","").replace(" ","").replace("(","").replace(")","")
     if not cleaned.startswith("+"): cleaned = "+1" + cleaned
     return cleaned
@@ -152,7 +155,11 @@ async def sms_webhook(
     Body: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    print(f"[SMS] Inbound: From={From!r} Body={Body[:80]!r}", flush=True)
+    raw_from = From.strip()
+    # Detect channel before normalization — WhatsApp From is "whatsapp:+1XXXXXXXXXX"
+    channel = "whatsapp" if raw_from.lower().startswith("whatsapp:") else "sms"
+
+    print(f"[SMS] Inbound: channel={channel} From={raw_from!r} Body={Body[:80]!r}", flush=True)
 
     # Render terminates TLS at the proxy — request.url has scheme http://.
     # Twilio signs the public https:// URL, so reconstruct it from headers.
@@ -181,13 +188,20 @@ async def sms_webhook(
         print(f"[SMS] Signature FAILED. url={url!r} sig={signature!r}", flush=True)
         raise HTTPException(status_code=403, detail="Invalid Twilio signature")
 
-    from_number = normalize_phone(From.strip())
+    from_number = normalize_phone(raw_from)
     body = Body.strip()
     upper = body.upper().strip()
 
     # Handle global opt-out keywords first
     if handle_opt_out(from_number, body):
         return ""
+
+    reply = await _dispatch(from_number, body, upper, db)
+    return await _send_reply(channel, from_number, reply)
+
+
+async def _dispatch(from_number: str, body: str, upper: str, db: Session) -> str:
+    """Route the inbound message to the correct handler and return the reply text."""
 
     # ── Step 1: Is this a registered staff member? ─────────────────────────
     staff = db.query(Staff).filter(
@@ -255,6 +269,21 @@ async def sms_webhook(
         "enrolled students and registered staff. "
         "To enroll, text JOIN [SECTIONCODE] [JOINCODE] to this number."
     )
+
+
+async def _send_reply(channel: str, from_number: str, reply: str) -> PlainTextResponse:
+    """Send the reply via the correct channel and return an appropriate HTTP response."""
+    if not reply:
+        return PlainTextResponse("")
+    if channel == "whatsapp":
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, send_whatsapp_message, from_number, reply)
+        if result["status"] == "failed":
+            print(f"[WA] Reply failed to {from_number}: {result.get('error')}", flush=True)
+        # Return empty body — reply was sent via REST API, not TwiML
+        return PlainTextResponse("")
+    # SMS: let Twilio deliver the reply via TwiML auto-response
+    return PlainTextResponse(reply)
 
 
 # ── STAFF CONVERSATION ENGINE ──────────────────────────────────────────────
