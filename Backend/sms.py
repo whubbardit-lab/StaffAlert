@@ -10,8 +10,19 @@ load_dotenv()
 ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 SERVICE_NUMBER = os.getenv("TWILIO_SERVICE_NUMBER")
+WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER", "whatsapp:+14155238886")
 
 client = Client(ACCOUNT_SID, AUTH_TOKEN)
+
+
+def send_whatsapp_message(to_number: str, body: str) -> dict:
+    """Send a WhatsApp message via Twilio. to_number must be E.164 (e.g. +1XXXXXXXXXX)."""
+    wa_to = f"whatsapp:{to_number}"
+    try:
+        message = client.messages.create(body=body, from_=WHATSAPP_NUMBER, to=wa_to)
+        return {"to": wa_to, "sid": message.sid, "status": "sent"}
+    except TwilioRestException as e:
+        return {"to": wa_to, "sid": None, "status": "failed", "error": str(e)}
 
 
 def send_single_sms(to: str, body: str) -> dict:
